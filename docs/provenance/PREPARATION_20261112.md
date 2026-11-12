@@ -1,6 +1,6 @@
 # 2026-11-12 공개 기준선 준비·검증
 
-상태: 로컬 소스·도구 준비 완료, 통합 제품 PARTIAL. 공개 repository 생성·push·exact-SHA CI는 별도 확인 대상이다.
+상태: 로컬 소스·도구 준비 및 공개 beta 게시 완료, 통합 제품 PARTIAL. 최초 공개 CI의 실패와 호환 수정은 [CI 기록](CI_BOOTSTRAP_20261112.md)을 따른다.
 
 ## 가져온 범위
 
@@ -36,11 +36,11 @@ cross GCC/ld/objcopy 실행과 Python 개발 진입을 확인했다. cross toolc
 
 로컬 raw 로그·상세 도구 경로는 gitignored build/workspace에 보존한다. 전체 suite가 끝나지 않았으므로 과거 1122/815 결과를 이 새 snapshot의 PASS로 쓰지 않는다.
 
-Testkit의 Job active-process drain과 retained process-handle signaled 확인 사이에는 별도 완료 대기가 없어 race 가능성이 있다. 단독 PASS만으로 병렬 부하가 원인이라고 확정하거나 cleanup의 안전성을 승격하지 않는다. 가져온 runtime/tests bytes는 변경하지 않았다.
+Testkit의 Job active-process drain과 retained process-handle signaled 확인 사이에는 별도 완료 대기가 없어 race 가능성이 있다. 단독 PASS만으로 병렬 부하가 원인이라고 확정하거나 cleanup의 안전성을 승격하지 않는다. 최초 준비 snapshot에서는 가져온 runtime/tests bytes를 변경하지 않았다. 이후 최초 CI에서 확인한 시험 fixture 두 파일과 build flag 수정은 별도 검토 이력으로 기록한다.
 
 ## 남은 작업
 
-1. 새 공개 저장소를 생성하고 beta snapshot을 게시한 뒤 exact commit CI를 확인한다.
+1. 공개 저장소와 최초 beta 게시를 확인했다. 최초 CI 호환 수정 후 새 exact commit의 결과를 확인한다.
 2. Windows 전체 회귀의 handle 종료·HTTP UNKNOWN 원인을 분리한다.
 3. GRUB/xorriso와 Linux native build/VM 경로를 별도 준비·검증한다.
 4. 제품 수락은 [ROADMAP](../ROADMAP.md)의 고정 UEFI 설치·유용한 Task부터 진행한다.

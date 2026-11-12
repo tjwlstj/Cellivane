@@ -32,7 +32,7 @@ TEST_TIMEOUT ?= 12
 
 # Flags
 ASMFLAGS    = -f elf64
-CFLAGS      = -ffreestanding -nostdlib -nostdinc -fno-builtin \
+CFLAGS      = -std=gnu11 -ffreestanding -nostdlib -nostdinc -fno-builtin \
               -fstack-protector-strong -mstack-protector-guard=global \
               -mno-red-zone -mno-mmx -mno-sse -mno-sse2 \
               -Wall -Wextra -Wno-unused-parameter -O2 \

@@ -454,7 +454,9 @@ class MatrixFixture:
                 stdout, stderr, invocation = run.root / "reader.stdout.json", run.root / "reader.stderr.txt", run.root / "reader.invocation.json"
                 stdout.write_bytes(encode(verdict) + b"\n"); stderr.write_bytes(b"")
                 summary_sha = record(run.path)["sha256"]
-                argv = [sys.executable, "-B", str(self.source_root / "tools/hosted/verify_cellivane_efficiency.py"), str(run.path), "--source-root", str(self.source_root)]
+                # The current interpreter is trusted fixture setup; canonicalize its file.
+                # Production evidence validators still reject symlink input paths.
+                argv = [str(Path(sys.executable).resolve(strict=True)), "-B", str(self.source_root / "tools/hosted/verify_cellivane_efficiency.py"), str(run.path), "--source-root", str(self.source_root)]
                 invocation.write_bytes(encode({"argv": argv, "returncode": 0, "stdout_sha256": record(stdout)["sha256"],
                     "stderr_sha256": record(stderr)["sha256"], "verifier_sha256": self.verification["tools/hosted/verify_cellivane_efficiency.py"],
                     "summary_sha256_before": summary_sha, "summary_sha256_after": summary_sha, "verification_source_sha256": self.verification}))

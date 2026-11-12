@@ -28,7 +28,7 @@ hosted, testkit, Seed는 각각 별도 Python subprocess에서 실행한다. 두
 
 ## 선택 native 도구
 
-native cross build에는 x86_64-elf GCC/binutils, Make·NASM이 필요하다. Windows 스크립트는 AIOS_X86_64_ELF_ROOT 또는 .toolchain/x86_64-elf를 지원한다. 일반 MinGW GCC를 cross compiler로 취급하지 않는다.
+native cross build에는 x86_64-elf GCC/binutils, Make·NASM이 필요하다. 커널 Makefile은 GNU C11 모드를 명시해 새 컴파일러의 기본 C23과 기존 타입 계약이 충돌하지 않게 한다. Windows 스크립트는 AIOS_X86_64_ELF_ROOT 또는 .toolchain/x86_64-elf를 지원한다. 일반 MinGW GCC를 cross compiler로 취급하지 않는다.
 
 ISO 생성과 VM에는 GRUB·xorriso·QEMU 등이 별도로 필요하다. 찾은 QEMU/UEFI 펌웨어는 개발 도구이며 새 UEFI 설치 검증의 증거가 아니다. 이번 세션의 MSYS xorriso/GRUB·WSL 제한은 준비 기록을 따른다.
 

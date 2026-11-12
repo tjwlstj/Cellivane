@@ -71,7 +71,9 @@ class MatrixFixture:
             save(summary_path, summary)
             save(verdict_path, verdict)
             stderr_path.write_bytes(b"")
-            invocation = {"argv": [sys.executable, "-B", str(self.source / collector.MAIN_READER), str(summary_path), "--source-root", str(self.source)],
+            # The current interpreter is trusted fixture setup; canonicalize its file.
+            # Production evidence validators still reject symlink input paths.
+            invocation = {"argv": [str(Path(sys.executable).resolve(strict=True)), "-B", str(self.source / collector.MAIN_READER), str(summary_path), "--source-root", str(self.source)],
                 "returncode": 0, "stdout_sha256": sha256(verdict_path.read_bytes()).hexdigest(), "stderr_sha256": sha256(b"").hexdigest(),
                 "verifier_sha256": self.readers[collector.MAIN_READER], "summary_sha256_before": sha256(summary_path.read_bytes()).hexdigest(),
                 "summary_sha256_after": sha256(summary_path.read_bytes()).hexdigest(), "verification_source_sha256": self.readers}

@@ -3064,9 +3064,9 @@
       "source_sha256": "b4278ceed1a0c2647ac69781aafd8e70b14c9ea03226bbef3d80f459dd2348dd",
       "reference_commit": "7d47524867e5f3d49521a0a5f7b1d0e65b5fe395",
       "snapshot_uncommitted_content_possible": true,
-      "exported_sha256": "b4278ceed1a0c2647ac69781aafd8e70b14c9ea03226bbef3d80f459dd2348dd",
-      "exported_bytes": 9629,
-      "public_text_adjusted": false
+      "exported_sha256": "d4a768b6094b3724af82bca012bec15af6ac4cf7bbdbd8a897a9f4b483011ee8",
+      "exported_bytes": 9640,
+      "public_text_adjusted": true
     },
     {
       "component": "aios-serving",
@@ -6652,9 +6652,9 @@
       "source_sha256": "83a4641b6dda132855c019c0c9541cfdeb50fec020fc5d419381e92ebc0af9eb",
       "reference_commit": "b89273b0e2cbb4ec7a61e1efb02f69beb1d529f1",
       "snapshot_uncommitted_content_possible": true,
-      "exported_sha256": "83a4641b6dda132855c019c0c9541cfdeb50fec020fc5d419381e92ebc0af9eb",
-      "exported_bytes": 15395,
-      "public_text_adjusted": false
+      "exported_sha256": "4c2d927c662da6567e81a0291fedf346c279eba29d7423f2a5c57a4356278499",
+      "exported_bytes": 15593,
+      "public_text_adjusted": true
     },
     {
       "component": "seed",
@@ -6664,9 +6664,9 @@
       "source_sha256": "3de40013d7d17ad2b9727cfbf2426c46a536a2f2a584857c6c4810eba24c6000",
       "reference_commit": "b89273b0e2cbb4ec7a61e1efb02f69beb1d529f1",
       "snapshot_uncommitted_content_possible": true,
-      "exported_sha256": "3de40013d7d17ad2b9727cfbf2426c46a536a2f2a584857c6c4810eba24c6000",
-      "exported_bytes": 34086,
-      "public_text_adjusted": false
+      "exported_sha256": "da5861e339fbe36b211e16beffcde237b5d2287106e829832eccb82ff90800ee",
+      "exported_bytes": 34292,
+      "public_text_adjusted": true
     },
     {
       "component": "seed",
@@ -7183,6 +7183,38 @@
           "path": ".gitattributes",
           "old_exported_sha256": "c955d5711f43f5af47f879fc8d0eb429fa1d0b32cc8e950d84e0b8d8dfd29d66",
           "new_exported_sha256": "a4496cd30620ba2905ba2f21c394e9c8cd0557ffd4927bac0375b1ea21a19894"
+        }
+      ]
+    }
+  ],
+  "reviewed_source_changes": [
+    {
+      "id": "ci-portability-20261112",
+      "baseline_commit": "ff3d4353741977872072514ec24afa3d476dc4e0",
+      "reason": "Pin GNU C11 and canonicalize trusted interpreter paths in two synthetic Seed fixtures; production validators unchanged.",
+      "review": "docs/provenance/CI_BOOTSTRAP_20261112.md",
+      "validation": {
+        "gcc15_gnu23_header_fixture": "EXPECTED_FAIL",
+        "gcc15_gnu11_header_fixture": "PASS",
+        "cross_compiler_c_units_syntax": 42,
+        "seed_matrix_pass": 12,
+        "seed_verifier_pass": 55
+      },
+      "files": [
+        {
+          "path": "kernel/Makefile",
+          "before_export_sha256": "b4278ceed1a0c2647ac69781aafd8e70b14c9ea03226bbef3d80f459dd2348dd",
+          "after_export_sha256": "d4a768b6094b3724af82bca012bec15af6ac4cf7bbdbd8a897a9f4b483011ee8"
+        },
+        {
+          "path": "components/seed/tools/hosted/tests/test_cellivane_efficiency_matrix.py",
+          "before_export_sha256": "83a4641b6dda132855c019c0c9541cfdeb50fec020fc5d419381e92ebc0af9eb",
+          "after_export_sha256": "4c2d927c662da6567e81a0291fedf346c279eba29d7423f2a5c57a4356278499"
+        },
+        {
+          "path": "components/seed/tools/hosted/tests/test_cellivane_efficiency_verifier.py",
+          "before_export_sha256": "3de40013d7d17ad2b9727cfbf2426c46a536a2f2a584857c6c4810eba24c6000",
+          "after_export_sha256": "da5861e339fbe36b211e16beffcde237b5d2287106e829832eccb82ff90800ee"
         }
       ]
     }
