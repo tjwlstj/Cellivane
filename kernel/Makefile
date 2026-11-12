@@ -1,0 +1,249 @@
+# =============================================================================
+# AIOS Kernel - Build System
+# AI-Native Operating System
+# =============================================================================
+
+# Toolchain
+TOOLCHAIN_PREFIX ?=
+ASM         ?= nasm
+CC          ?= $(TOOLCHAIN_PREFIX)gcc
+LD          ?= $(TOOLCHAIN_PREFIX)ld
+OBJCOPY     ?= $(TOOLCHAIN_PREFIX)objcopy
+
+# Directories (relative to this kernel/ domain root)
+BOOT_DIR    = boot
+KERNEL_DIR  = core
+MM_DIR      = mm
+SCHED_DIR   = sched
+HAL_DIR     = hal
+RUNTIME_DIR = runtime
+DRIVERS_DIR = drivers
+INTERRUPT_DIR = interrupt
+LIB_DIR     = lib
+INCLUDE_DIR = include
+BUILD_DIR   = build
+ISO_DIR     = $(BUILD_DIR)/isofiles
+
+# Output
+KERNEL_BIN  = $(BUILD_DIR)/aios-kernel.bin
+KERNEL_ISO  = $(BUILD_DIR)/aios-kernel.iso
+TEST_LOG    = $(BUILD_DIR)/serial_output.log
+TEST_TIMEOUT ?= 12
+
+# Flags
+ASMFLAGS    = -f elf64
+CFLAGS      = -ffreestanding -nostdlib -nostdinc -fno-builtin \
+              -fstack-protector-strong -mstack-protector-guard=global \
+              -mno-red-zone -mno-mmx -mno-sse -mno-sse2 \
+              -Wall -Wextra -Wno-unused-parameter -O2 \
+              -I$(INCLUDE_DIR) \
+              -mcmodel=kernel -fno-pic -fno-pie
+LDFLAGS     = -T $(KERNEL_DIR)/linker.ld -nostdlib -z max-page-size=0x1000
+
+# Source files
+ASM_SOURCES = $(BOOT_DIR)/boot.asm \
+              $(INTERRUPT_DIR)/isr_stub.asm \
+              $(KERNEL_DIR)/user_entry.asm \
+              $(SCHED_DIR)/kthread_switch.asm
+C_SOURCES   = $(KERNEL_DIR)/main.c \
+              $(KERNEL_DIR)/acpi.c \
+              $(KERNEL_DIR)/health.c \
+              $(KERNEL_DIR)/kernel_room.c \
+              $(KERNEL_DIR)/kernel_room_management.c \
+              $(KERNEL_DIR)/kernel_room_source_binding.c \
+              $(KERNEL_DIR)/time.c \
+              $(KERNEL_DIR)/selftest.c \
+              $(KERNEL_DIR)/user_mode.c \
+              $(KERNEL_DIR)/process.c \
+              $(KERNEL_DIR)/user_access.c \
+              $(KERNEL_DIR)/user_exec.c \
+              $(KERNEL_DIR)/elf_loader.c \
+              $(KERNEL_DIR)/stack_guard.c \
+              $(KERNEL_DIR)/cpu_sec.c \
+              $(KERNEL_DIR)/shell.c \
+              $(LIB_DIR)/string.c \
+              $(INTERRUPT_DIR)/idt.c \
+              $(INTERRUPT_DIR)/trapframe.c \
+              $(MM_DIR)/tensor_mm.c \
+              $(MM_DIR)/memory_fabric.c \
+              $(MM_DIR)/heap.c \
+              $(MM_DIR)/address_space.c \
+              $(SCHED_DIR)/ai_sched.c \
+              $(SCHED_DIR)/kthread.c \
+              $(HAL_DIR)/accel_hal.c \
+              $(RUNTIME_DIR)/ai_syscall.c \
+              $(RUNTIME_DIR)/autonomy.c \
+              $(RUNTIME_DIR)/ai_resource.c \
+              $(RUNTIME_DIR)/ai_pressure.c \
+              $(RUNTIME_DIR)/nodebit.c \
+              $(RUNTIME_DIR)/node_pipeline.c \
+              $(RUNTIME_DIR)/slm_orchestrator.c \
+              $(DRIVERS_DIR)/vga.c \
+              $(DRIVERS_DIR)/serial.c \
+              $(DRIVERS_DIR)/keyboard.c \
+              $(DRIVERS_DIR)/driver_model.c \
+              $(DRIVERS_DIR)/pci_core.c \
+              $(DRIVERS_DIR)/platform_probe.c \
+              $(DRIVERS_DIR)/usb_host.c \
+              $(DRIVERS_DIR)/storage_host.c \
+              $(DRIVERS_DIR)/e1000.c
+
+# Object files
+ASM_OBJECTS = $(patsubst %.asm,$(BUILD_DIR)/%.o,$(ASM_SOURCES))
+C_OBJECTS   = $(patsubst %.c,$(BUILD_DIR)/%.o,$(C_SOURCES))
+OBJECTS     = $(ASM_OBJECTS) $(C_OBJECTS)
+DEPFILES    = $(C_OBJECTS:.o=.d)
+
+# =============================================================================
+# Targets
+# =============================================================================
+
+.PHONY: all clean iso run run-headless debug check info test
+
+all: check $(KERNEL_BIN)
+
+check:
+	@echo "[CHECK] Validating build toolchain..."
+	@command -v $(ASM) >/dev/null 2>&1 || { echo "[ERR] Missing assembler: $(ASM)"; exit 1; }
+	@command -v $(CC) >/dev/null 2>&1 || { echo "[ERR] Missing compiler: $(CC)"; exit 1; }
+	@command -v $(LD) >/dev/null 2>&1 || { echo "[ERR] Missing linker: $(LD)"; exit 1; }
+	@echo "[OK] ASM: $$($(ASM) --version | head -n 1)"
+	@echo "[OK]  CC: $$($(CC) --version | head -n 1)"
+	@echo "[OK]  LD: $$($(LD) --version | head -n 1)"
+
+# Build kernel binary
+$(KERNEL_BIN): $(OBJECTS) $(KERNEL_DIR)/linker.ld
+	@echo "[LD] Linking kernel..."
+	@mkdir -p $(dir $@)
+	$(LD) $(LDFLAGS) -o $@ $(OBJECTS)
+	@echo "[OK] Kernel binary: $@"
+	@echo "[INFO] Kernel size: $$(wc -c < $@) bytes"
+
+# Assemble .asm files
+$(BUILD_DIR)/%.o: %.asm
+	@echo "[ASM] $<"
+	@mkdir -p $(dir $@)
+	$(ASM) $(ASMFLAGS) $< -o $@
+
+# Compile .c files
+$(BUILD_DIR)/%.o: %.c
+	@echo "[CC] $<"
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -MMD -MP -c $< -o $@
+
+# Create bootable ISO
+iso: $(KERNEL_BIN)
+	@echo "[ISO] Creating bootable ISO..."
+	@mkdir -p $(ISO_DIR)/boot/grub
+	@cp $(KERNEL_BIN) $(ISO_DIR)/boot/aios-kernel.bin
+	@echo 'set timeout=3' > $(ISO_DIR)/boot/grub/grub.cfg
+	@echo 'set default=0' >> $(ISO_DIR)/boot/grub/grub.cfg
+	@echo '' >> $(ISO_DIR)/boot/grub/grub.cfg
+	@echo 'menuentry "AIOS - AI-Native Operating System" {' >> $(ISO_DIR)/boot/grub/grub.cfg
+	@echo '    multiboot2 /boot/aios-kernel.bin' >> $(ISO_DIR)/boot/grub/grub.cfg
+	@echo '    boot' >> $(ISO_DIR)/boot/grub/grub.cfg
+	@echo '}' >> $(ISO_DIR)/boot/grub/grub.cfg
+	grub-mkrescue -o $(KERNEL_ISO) $(ISO_DIR)
+	@echo "[OK] Bootable ISO: $(KERNEL_ISO)"
+
+# Run in QEMU
+run: iso
+	qemu-system-x86_64 \
+		-cdrom $(KERNEL_ISO) \
+		-boot d \
+		-m 2G \
+		-nic user,model=e1000 \
+		-device qemu-xhci \
+		-serial stdio \
+		-display curses \
+		-no-reboot \
+		-no-shutdown
+
+# Run in QEMU (headless, serial output only)
+run-headless: iso
+	qemu-system-x86_64 \
+		-cdrom $(KERNEL_ISO) \
+		-boot d \
+		-m 2G \
+		-nic user,model=e1000 \
+		-device qemu-xhci \
+		-serial stdio \
+		-display none \
+		-no-reboot \
+		-no-shutdown
+
+# Run in QEMU with debug
+debug: iso
+	qemu-system-x86_64 \
+		-cdrom $(KERNEL_ISO) \
+		-boot d \
+		-m 2G \
+		-nic user,model=e1000 \
+		-device qemu-xhci \
+		-serial stdio \
+		-display curses \
+		-no-reboot \
+		-no-shutdown \
+		-s -S
+
+# QEMU smoke test (boot and check serial output)
+test: iso
+	@echo "[TEST] Running QEMU smoke test..."
+	@rm -f $(TEST_LOG)
+	@status=0; \
+	timeout $(TEST_TIMEOUT) qemu-system-x86_64 \
+		-cdrom $(KERNEL_ISO) \
+		-boot d \
+		-m 256M \
+		-nic user,model=e1000 \
+		-device qemu-xhci \
+		-serial file:$(TEST_LOG) \
+		-display none \
+		-no-reboot \
+		-no-shutdown 2>/dev/null || status=$$?; \
+	if [ $$status -ne 0 ] && [ $$status -ne 124 ]; then \
+		echo "[ERR] QEMU exited unexpectedly with status $$status"; \
+		exit $$status; \
+	fi; \
+	if [ ! -f $(TEST_LOG) ]; then \
+		echo "[ERR] Smoke test did not produce a serial log"; \
+		exit 1; \
+	fi; \
+	if [ ! -s $(TEST_LOG) ]; then \
+		echo "[ERR] Smoke test produced an empty serial log"; \
+		exit 1; \
+	fi; \
+	if grep -q "AIOS Kernel Ready" $(TEST_LOG) && \
+	   grep -q "\\[SELFTEST\\] Memory microbench PASS" $(TEST_LOG) && \
+	   grep -q "\\[DEV\\] Peripheral probe ready" $(TEST_LOG) && \
+	   tr -d '\r' < $(TEST_LOG) | grep -Fxq "[RESOURCE] ledger selftest PASS schema=1 kinds=5 units=2 entries=5 capacity=8 source_flags=31 limit_kinds=5 used_kinds=5 high_water_kinds=1 denied_kinds=0 owners_unattributed=1 observation_only=1" && \
+	   tr -d '\r' < $(TEST_LOG) | grep -Fxq "[PRESSURE] tracker selftest PASS schema=1 planes=3 max_levels=4 active_levels=2 balanced=1 hotspot=1 overlap=1 gate_mask=1 observation_only=1" && \
+	   tr -d '\r' < $(TEST_LOG) | grep -Fxq "[ROOM] management hierarchy selftest PASS schema=1 struct_size=1024 generation=1 cells=1 nodes=1 bound_nodes=1 nodebits=2 bound_nodebits=2 source_valid=1 generation_valid=1 duplicate_rejected=1 orphan_rejected=1 unknown_rejected=1 stale_rejected=1 overflow_rejected=1 tail_rejected=1 observation_only=1 management_only=1" && \
+	   tr -d '\r' < $(TEST_LOG) | grep -Fxq "[ROOM] source binding selftest PASS schema=1 struct_size=256 binding_generation=1 bindings=1 capacity=2 canonical_namespace=2 canonical_id=101 canonical_kind=1 canonical_generation=1 parent_cell_id=1 parent_generation=1 source_namespace=1 source_id=1 source_instance=1 source_generation=1 source_kind=1 source_role=1 kind_match=1 role_match=1 producer_owned=1 copied_read=1 missing_rejected=1 duplicate_rejected=1 orphan_rejected=1 namespace_rejected=1 kind_rejected=1 role_rejected=1 instance_rejected=1 zero_generation_rejected=1 generation_rollback_rejected=1 stale_rejected=1 init_order_rejected=1 schema_rejected=1 overflow_rejected=1 tail_rejected=1 source_valid=1 generation_valid=1 binding_valid=1 observation_only=1 management_only=1" && \
+	   grep -q "\\[HEALTH\\] stability=" $(TEST_LOG) && \
+	   grep -q "\\[SHELL\\] Interactive shell started" $(TEST_LOG); then \
+		echo "[OK] Smoke test PASSED - kernel booted and shell started"; \
+	else \
+		echo "[ERR] Smoke test did not reach expected ready/selftest/probe/shell state"; \
+		echo "[INFO] Last serial log lines:"; \
+		tail -n 40 $(TEST_LOG) || true; \
+		exit 1; \
+	fi
+
+# Clean build artifacts
+clean:
+	@echo "[CLEAN] Removing build directory..."
+	rm -rf $(BUILD_DIR)
+	@echo "[OK] Clean complete"
+
+# Print build info
+info:
+	@echo "=== AIOS Kernel Build Info ==="
+	@echo "ASM Sources: $(ASM_SOURCES)"
+	@echo "C Sources:   $(C_SOURCES)"
+	@echo "Objects:     $(OBJECTS)"
+	@echo "Kernel:      $(KERNEL_BIN)"
+	@echo "ISO:         $(KERNEL_ISO)"
+	@echo "=============================="
+
+-include $(DEPFILES)

@@ -1,0 +1,271 @@
+# AIOS 빌드 참고 프로젝트 최신 조사
+
+> 조사 확인일: 2026-08-03
+> 구현 경계 재검증: 2026-08-10
+> 상태: `REVIEW / RESEARCH` — 외부 프로젝트에서 가져올 설계 힌트와 당시 AIOS 적용 순서를
+> 정리한 문서다. 외부 프로젝트의 기능을 AIOS의 `CURRENT` 구현으로 간주하지 않는다.
+>
+> 구현 상태의 정본은 [CLAUDE.md](../../CLAUDE.md),
+> [Kernel Room 관리 모델](../kernel-room/kernel_room_management_model_ko.md),
+> [최소 I/O·성숙도 워크플로](minimal_io_and_maturity_workflow_ko.md),
+> [검증 툴링 진화 설계](../tools/verification_tooling_evolution_design_ko.md)다.
+> 아래 §6은 실행 substrate 조사 당시의 세부 진행 순서이며, 현재 정본 K축 순서를
+> 대체하지 않는다.
+
+> [!WARNING]
+> **역사적 조사 스냅샷**
+>
+> 아래 §2와 §6의 현재 상태·다음 순서는 2026-08-10 경계를 보존한다. 2026-08-11 현재
+> K1 bounded hierarchy registry v0는 `CURRENT`이고 다음 직접 관리 조각은 K2 external
+> source binding과 generation/reconciliation 확대다. 현재 작업 순서는 위 정본 링크를
+> 따르고, 이 문서의 K1 `PLANNED` 또는 "다음" 표현을 지침으로 사용하지 않는다.
+
+## 1. 조사 목적과 판정 원칙
+
+이번 조사는 이름에 `AIOS`가 들어가는 프로젝트만 찾는 작업이 아니다. 현재 AIOS가
+다음 실행 조각을 안전하게 만들 때 실제로 참고할 수 있는 공개 프로젝트를 계층별로
+나누고, 어느 시점에 무엇만 가져올지 결정하는 작업이다.
+
+- bare-metal/kernel 프로젝트와 host OS 위 agent runtime을 같은 계층으로 비교하지 않는다.
+- README의 성능·안전성 주장은 독립 검증 전까지 외부 프로젝트의 주장으로만 취급한다.
+- 구조를 참고해도 AIOS의 exact marker, fail-closed verdict, rollback 불변식은 유지한다.
+- 큰 프레임워크를 먼저 이식하지 않고 현재 가장 가까운 검증 조각에 필요한 개념만 가져온다.
+- 조사 결과는 `RESEARCH`; 코드·테스트·아티팩트가 함께 생기기 전에는 `CURRENT`로 올리지 않는다.
+
+## 2. AIOS의 현재 출발점
+
+조사 시작 기준 체크포인트는 `5b345f3`의 trapframe 계약 조각이었다.
+아래 표는 2026-08-10 process-owned trap evidence snapshot v0, process event journal v1,
+ring3 entry AC hardening 반영 후의 현재 경계를 사용한다.
+
+| 상태 | 현재 범위 |
+|---|---|
+| `CURRENT` | x86_64 부팅, 정적 ELF64, 두 bootstrap process의 private CR3·16KiB ring0 entry stack, PID 1→PID 2 순차 ring3 실행, 176B C/NASM trapframe exact 계약, CPL0/CPL3 `from_user` 실경로 증거 |
+| `CURRENT` | ISR 시점 owner/current/private CR3/TSS `rsp0`/IF=0을 검증한 descriptor-owned trap evidence snapshot v0: full 176B frame 복사, per-boot sequence 1,2, finish 뒤 보존과 final pair 경계 양쪽 재조회, `resume_ready=0` |
+| `CURRENT` | per-boot capacity 8/no-overwrite process event journal v1: acquire/capture/release 여섯 record, event sequence 1..6과 별도 capture sequence 1,2, exact ordered-vector marker·structured `process_event_journal`·`state user event_*`, `evidence_only=1 switch_events=0 resume_ready=0` |
+| `CURRENT` | `default`/`max-smap` CPU profile별 ring3 entry AC hardening: common `#BP` 2회와 `int 0x80` 6회의 saved AC challenge, 진입 직후 AC=0, feature-gated CLAC/fallback exact counter, ordered security marker·structured `security`·`state sec entry_*` mirror |
+| `CURRENT` | 커널 kthread의 타이머 선점, strict boot/shell verdict, 세 프로파일 inventory, pressure/resource aggregate 관측 |
+| `PARTIAL` | process 모델은 정적 두 슬롯이며 실행은 순차 동기 호출이다. descriptor snapshot과 event journal은 증거 소유권·순서만 가지며 scheduler runnable state나 재개 가능한 continuation으로 결속되지 않았다. next-prepare reset/run generation은 구현됐지만 live reuse/re-prepare와 stale-generation 거부의 부팅 증거는 없다 |
+| `PARTIAL` | pressure/resource는 `observation_only=1`이다. owner attribution, quota, reserve/apply, migration 입력은 없다 |
+| `PLANNED` | resumable saved context, runnable-state 결속, live continuation/switch, 두 ring3 process의 타이머 선점 교대, 실제 A→B→A switch sequence, process fault teardown, bounded execution budget, 동적 PMM/VMM |
+| `PLANNED` | Kernel Room K1~K5 관리 hierarchy/binding/attribution/authorize, virtio-blk 읽기(M4), 디스크 ELF(M5), 브라우저 콘솔·AIOS native runtime(W1~W5) |
+
+따라서 이 실행 substrate 조사에서 가까운 외부 참고점은 “완성형 AI agent platform”보다 **saved-state 소유권,
+전환 증거, bounded execution, 작은 신뢰 경계**에 가깝다.
+
+## 3. 가까운 커널 작업에 직접 참고할 프로젝트
+
+### 3.1 Theseus OS — task가 saved state를 소유하는 경계
+
+- 공식 자료: [Theseus task management](https://www.theseus-os.com/Theseus/book/subsystems/task.html),
+  [GitHub](https://github.com/theseus-os/Theseus)
+- 관찰: task 전환은 저장할 레지스터 상태의 소유자와 assembly 전환 경계를 명확히
+  나눈다. SIMD/FPU 상태의 포함 여부도 별도 정책 문제로 다룬다.
+- AIOS에 가져올 것: 기존 global capture를 곧바로 scheduler continuation으로 부르지 않고,
+  각 bootstrap process가 자신의 검증된 trapframe snapshot과 validity를 소유하게 한다.
+- 지금 가져오지 않을 것: Theseus의 언어·object model 전체나 범용 동적 task 모델.
+  AIOS는 현재 `-mno-sse` 경계를 유지하므로 먼저 GPR trapframe만 다룬다.
+
+### 3.2 seL4 MCS — budget와 fault를 전환의 일부로 다루기
+
+- 공식 자료: [seL4 검증 범위](https://sel4.org/Verification/),
+  [MCS tutorial](https://docs.sel4.systems/Tutorials/mcs.html)
+- 관찰: MCS는 scheduling context에 시간 budget을 결속하고 timeout/fault를 명시적인
+  결과로 만든다. seL4의 검증 설명도 assembly, boot, machine/hardware 같은 가정을 따로 적는다.
+- AIOS에 가져올 것: timer-preemptive ring3 전환 완료 조건에 bounded budget과 process
+  fault teardown reason을 처음부터 포함하고, timeout을 단순 host hang과 구분한다.
+- 지금 가져오지 않을 것: capability/MCS 전체 모델이나 “형식 검증됨”이라는 표현.
+  AIOS의 assembly·부트 경로는 자체 실경로 증거로만 주장한다.
+
+### 3.3 Asterinas — 작은 privileged/unsafe frame과 재현 가능한 도구 표면
+
+- 공식 자료: [Asterinas GitHub](https://github.com/asterinas/asterinas)
+- 관찰: framekernel 구조는 privileged/unsafe 저수준 경계를 작은 OSTD 영역으로 모으고,
+  OSDK를 통해 build/run/test 표면을 일관되게 제공한다.
+- AIOS에 가져올 것: interrupt entry, CR3/TSS 교대, scheduler policy를 한 덩어리로
+  키우지 않고 entry-frame primitive와 policy 결정을 분리한다. 장기적으로 testkit 명령도
+  하나의 manifest/provenance 표면으로 묶는다.
+- 지금 가져오지 않을 것: Rust 재작성이나 Linux ABI 호환 범위.
+
+### 3.4 Redox OS — userspace 서비스 분해의 장기 참고선
+
+- 공식 자료: [Redox OS GitHub 조직](https://github.com/redox-os)
+- 관찰: 작은 커널과 분리된 userspace 구성요소를 통해 서비스 경계를 만든다.
+- AIOS에 가져올 것: K1~K5 관리 경계와 M5 실행 기반 이후 `aios-init`, storage/network service, agent runtime을
+  ring0에 밀어 넣지 않고 process/principal 경계로 분리하는 방향.
+- 지금 가져오지 않을 것: M3-b-3b2c보다 앞선 대규모 userspace 재구성.
+
+## 4. 빌드·실행·배포 경로에 참고할 프로젝트
+
+### 4.1 Unikraft — 작은 기능 프로필과 최소 이미지
+
+- 공식 자료: [Unikraft GitHub](https://github.com/unikraft/unikraft)
+- 참고점: 필요한 구성요소만 선택하는 빌드와 작고 빠른 부팅 이미지를 지향한다.
+- AIOS 적용 후보: 현재 `full/minimal/storage-only`를 기능 의존성이 명시된 profile
+  manifest로 발전시키고, profile별 kernel/ISO hash와 활성 subsystem을 artifact에 남긴다.
+- 경계: unikernel의 단일 응용 이미지 모델은 두 process 격리의 대체물이 아니다.
+
+### 4.2 Firecracker — host session snapshot과 provenance
+
+- 공식 자료: [Firecracker snapshot 지원 문서](https://github.com/firecracker-microvm/firecracker/blob/main/docs/snapshotting/snapshot-support.md)
+- 참고점: snapshot을 만들 때 VM을 멈추고 VM state, memory, 외부 block state의 책임을
+  분리한다. full/diff state와 dirty tracking도 명시적으로 취급한다.
+- AIOS 적용 후보: W2 Host Session Runtime에서 pause 시점, ISO/kernel hash, QEMU
+  설정, memory/snapshot artifact, 외부 disk identity를 하나의 run manifest로 결속한다.
+- 경계: host VM snapshot은 AIOS 내부 process saved state나 C2 AI Flow checkpoint가 아니다.
+
+### 4.3 v86 — 현재 x86_64 비지원 기준선
+
+- 공식 자료: [v86 GitHub](https://github.com/copy/v86)
+- 확인 결과: 브라우저 안에서 x86 PC를 WebAssembly 기반으로 실행하지만 공식 README가
+  **64-bit extensions 미지원**을 명시한다. 따라서 현재 x86_64 AIOS ISO의 실행 후보가 아니다.
+- AIOS 적용 후보: W3 capability matrix의 명시적 `UNSUPPORTED: x86_64` 반례와
+  브라우저 serial/state/snapshot UX 조사에만 사용한다.
+- 이번 조사에서는 AIOS의 x86_64 full-system boot 요구를 충족한다고 공식 자료로
+  확인된 브라우저 엔진을 찾지 못했다. W3는 후보 미정의 feasibility gate로 유지한다.
+- 경계: 32-bit guest 부팅 화면이나 user-mode x86_64 ELF emulator를 AIOS ISO 부팅
+  가능성으로 바꾸어 해석하지 않는다.
+
+## 5. AI runtime 계층에 나중에 참고할 프로젝트
+
+### 5.1 Wasmtime와 WASI — userspace plugin/component 경계
+
+- 공식 자료: [Wasmtime 문서](https://docs.wasmtime.dev/),
+  [WASI releases](https://wasi.dev/releases)
+- 적용 시점: M5 디스크 ELF, K5 principal/ownership authorize, 안정적인 장기 userspace service 뒤.
+- 가져올 것: capability가 명시된 component/plugin 실행, host call 경계, runtime 격리.
+- 가져오지 않을 것: Wasm runtime을 kernel에 넣거나 W4의 선행 조건을 건너뛰는 것.
+
+### 5.2 agiresearch/AIOS와 Cerebrum — agent runtime/SDK만 참고
+
+- 공식 자료: [agiresearch/AIOS](https://github.com/agiresearch/AIOS),
+  [Cerebrum](https://github.com/agiresearch/Cerebrum)
+- 관찰: LLM/context/memory/storage/tool/scheduler를 host OS 위 runtime으로 분리하고,
+  SDK·manifest를 통해 agent를 구성한다.
+- AIOS 적용 후보: W4 이후 `aios-agentd`, `aios-memd`, tool manager, agent manifest.
+- 경계: 이 프로젝트의 “kernel”은 agent runtime 추상화다. bare-metal AIOS의 interrupt,
+  MM, driver, process 성숙도 비교 자료로 사용하지 않는다.
+
+### 5.3 NVIDIA Dynamo와 LMCache — 분산 inference 관측 힌트
+
+- 공식 자료: [NVIDIA Dynamo GitHub](https://github.com/ai-dynamo),
+  [LMCache GitHub](https://github.com/LMCache/LMCache)
+- 관찰: inference 요청 라우팅, 분리된 실행 단계, KV cache를 GPU/CPU/storage 계층에
+  걸쳐 다루는 구조가 있다.
+- AIOS 적용 후보: C2 AI Flow 이후 resource kind, queue depth, cache residency,
+  transfer/stall을 구조화된 관측값으로 확장할 때 참고한다.
+- 경계: 현재 pressure/resource snapshot을 이 자료만으로 scheduler migration, quota,
+  reserve/apply에 연결하지 않는다. `observation_only=1`을 유지한다.
+
+### 5.4 embodiOS — artifact packaging과 초기 shell UX만 비교
+
+- 공식 자료: [embodiOS GitHub](https://github.com/dddimcha/embodiOS)
+- 참고점: GGUF model을 boot artifact에 포함하는 흐름, QEMU/USB boot와 초기 AI shell UX.
+- 경계: 외부 README의 성능·모델 지원 주장은 독립 검증 전까지 참고 정보다. AIOS는
+  모델 실행을 ring0 기본 경로로 만들지 않고 mediated I/O와 userspace runtime 원칙을 유지한다.
+
+## 6. 실행 substrate 축의 조사 참고 순서
+
+이 절은 M3~M5 실행축 내부의 의존 순서를 보존한다. Kernel Room 관리축의 직접 다음
+마일스톤은 K1의 Cell + bound Node + parent-bound NodeBit 전체 vertical proof이며,
+아래 process 작업이 그 우선순위나 관리 성숙도를 대신하지 않는다.
+
+### 6.1 완료된 첫 조각: process-owned trap evidence snapshot v0 (`CURRENT`)
+
+목표는 **선점 구현이 아니라 trap evidence 소유권을 먼저 증명하는 것**이었다.
+
+1. 두 static process descriptor에 각자의 full `interrupt_frame_t` snapshot,
+   validity, per-boot capture sequence, run generation, owner PID/slot을 결속했다.
+2. 기존 ring3 `int3` ISR 실경로에서 current owner, private CR3, BSP TSS `rsp0`,
+   IF=0, exact frame address, CPL3 RFLAGS 경계를 확인한 뒤 full 176B frame을
+   해당 descriptor에 복사한다.
+3. PID 1→PID 2의 sequence 1,2, distinct snapshot storage, 각 finish 뒤 보존과
+   두 번째 실행 뒤 양쪽 descriptor의 최종 재조회,
+   최종 `current_pid=0`을 exact
+   `[PROC] trap evidence snapshot PASS ... stale_owner=0 resume_ready=0`과
+   `state user` `saved_*`로 노출한다.
+
+prepare 코드 경로는 이전 snapshot을 지우고 run generation을 올리지만,
+같은 slot의 live reuse/re-prepare와 stale-generation 거부 증거는 후속 검증으로 남아 있다.
+4. snapshot 조각은 `CURRENT`지만 전체 process 모델은 `PARTIAL`이다.
+   `resume_ready=0`이므로 continuation, context switch, preemption으로 부르지 않는다.
+
+이 조각은 Theseus의 saved-state 소유권 원칙을 작게 적용하면서도 현재 순차 runner와
+rollback 구조를 유지한다. 이어서 evidence-only process event journal을 고정한 뒤에만
+live continuation/switch로 나아가도록 순서를 유지했다.
+
+### 6.2 완료된 두 번째 조각: process event journal v1 (`CURRENT`)
+
+- append-only numeric schema/kind/reason/outcome과 per-boot event sequence를 정의했다.
+- capacity 8의 내부 journal은 기존 record를 덮어쓰지 않으며 두 synchronous run의
+  acquire/capture/release 여섯 record를 보존한다. 가득 찬 뒤 append 시도는 성공이나
+  overwrite가 아니라 dropped/overflow로 남고 정상 계약에서 fail-closed다.
+- exact vector는 `seqs=1,2,3,4,5,6`, `kinds=1,2,3,1,2,3`,
+  `from_pids=0,1,1,0,2,2`, `to_pids=1,1,0,2,2,0`이다. capture sequence 1,2는
+  별도 필드로 유지한다.
+- 각 record는 PID/slot/run generation, before/after CR3·BSP `rsp0`, current owner,
+  frame/snapshot reference, IF=0, outcome을 담는다.
+- exact `[PROC] process event journal PASS ...`, structured `process_event_journal`,
+  `state user event_*` mirror를 Python/PowerShell이 missing, duplicate, truncation,
+  확장, 역순, stale owner, sequence 혼용, aggregate-only 위장, overflow 반례로
+  fail-closed 검증한다.
+- 이 journal의 owner lifecycle은 `0→1→0→2→0`이다. capture self-edge를 포함한
+  순차 bootstrap 증거일 뿐 CPU switch event는 하나도 없고,
+  `evidence_only=1 switch_events=0 resume_ready=0`을 유지한다.
+
+### 6.3 완료된 세 번째 조각: ring3 entry AC hardening (`CURRENT`)
+
+- 실제 QEMU bootstrap pair에서 CPL3 `#BP` common entry 2회와 `int 0x80` entry
+  6회를 계측한다. saved user RFLAGS는 변경하지 않고 entry live AC는 항상 0이다.
+- 첫 int80는 AC=0이며 이후 각 process의 `int3`, hostile syscall, exit는 AC=1이다.
+  따라서 exact aggregate는 `common_saved_ac=2 int80_saved_ac=4`다.
+- SMAP active이면 `clac`, 비활성·미지원이면 `pushfq/btr/popfq` fallback을 사용해
+  `#UD` 없이 같은 postcondition을 만든다.
+- `[SEC] ring3 entry AC hardening PASS schema=1 ... gate_mismatch=0`와
+  `state sec entry_*` mirror를 `default`/`max-smap` CPU profile verifier가
+  profile별 exact CLAC/fallback 값으로 fail-closed 판정한다.
+- `CURRENT` 범위는 이 두 실제 CPL3 진입 경로와 QEMU 두 CPU profile 재현까지다.
+  future ring3 IRQ/NMI/IST, 실기기, resumable context와 process switch는 포함하지 않는다.
+
+### 6.4 이후: bounded cooperative proof → timer preemption
+
+1. IF=0 구간에서 current process, CR3, BSP TSS `rsp0`, saved frame,
+   `g_active_user_run_state`를 함께 교대한다.
+2. 먼저 bounded 실제 A→B→A 순서를 별도 live-switch 기계 판독 이벤트로 증명한다.
+3. 그 다음 `ai_sched_tick()` 요청과 CPL3 timer IRQ entry-stack 귀속을 연결한다.
+4. full GPR canary, 동일 VA 격리, syscall 왕복, execution budget, process fault
+   teardown과 첫 실패 trace를 완료 조건으로 둔다.
+5. future ring3 IRQ/NMI/IST 또는 새 ISR user-page 접근을 추가할 때는 완료된
+   `#BP`/int80 saved/live AC 계약을 해당 진입 경로로 별도 확장 검증한다.
+
+이 단계가 성공한 뒤에만 M3-b-3b2c를 선점 가능한 두 userspace process로
+`CURRENT` 승격한다. 이후 실행축 내부에서는 M4 virtio-blk → M5 disk ELF 순서를
+유지하되 이를 프로젝트 전체의 자동 다음 순서로 해석하지 않는다.
+
+## 7. 검증·릴리스 가이드
+
+다음 커널 조각은 기존 strict lane을 줄이지 않는다.
+
+- 변경 전 marker/event schema와 negative host test를 먼저 고정한다.
+- `py -3` host unit tests와 PowerShell verdict selftest를 모두 통과한다.
+- Windows kernel build, `git diff --check`, cppcheck를 통과한다.
+- QEMU full/minimal/storage-only, interactive shell, strict inventory를 통과한다.
+- 기본 CPU와 `-cpu max`에서 trapframe/process 증거와 SMAP 경계를 확인한다.
+- 정규 `default`/`max-smap` CPU profile에서 ring3 entry AC exact marker와
+  `state sec` mirror의 CLAC/fallback 분기를 각각 확인한다.
+- beta의 exact SHA가 terminal CI success일 때만 같은 SHA를 main으로 fast-forward한다.
+- baseline은 구현을 통과시키기 위한 수단으로 갱신하지 않고, 의도된 계약 변화와
+  새 trusted artifact가 함께 있을 때만 별도 검토한다.
+
+## 8. 채택 결론
+
+가장 가까운 세 참고선은 Theseus의 saved-state 소유권, seL4 MCS의 bounded
+budget/fault, Asterinas의 작은 privileged frame 경계다. Redox·Unikraft·Firecracker는
+각각 userspace 분해, profile build, host session provenance에 유용하지만 현재 trapframe
+작업을 대신하지 않는다.
+
+v86는 W3의 x86_64 비지원 기준선이며 실제 browser-local engine 후보는 아직 미정이다.
+Wasmtime/WASI와 agiresearch 계열은 W4 이후 userspace runtime, Dynamo/LMCache는
+C2 이후 분산 AI flow/resource 관측에 배치한다. 이 순서를 지키면
+외부 프로젝트의 규모에 끌려가지 않고 AIOS가 이미 가진 exact evidence와 rollback
+중심의 강점을 유지한 채 확장할 수 있다.

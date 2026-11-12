@@ -1,0 +1,1017 @@
+{
+  "artifact_family": "cellivane-large-model-soak-public-summary-v1",
+  "claims": {
+    "backend_kv_reuse": "backend-controlled-not-disabled",
+    "general_quality": false,
+    "host_or_endpoint_attestation": false,
+    "native_cpu_runtime_gpu_qualified": false,
+    "native_mtp": false,
+    "new_revision_ci_verified": false,
+    "os_resource_reservation": false,
+    "portable_speedup": false,
+    "process_exclusive_vram_measured": false,
+    "seed_result_cache_enabled": false,
+    "tensor_residency_managed": false,
+    "ttft": "NOT_MEASURED",
+    "weight_values_changed": false
+  },
+  "date": "2026-10-16",
+  "experiments": {
+    "final_smoke": {
+      "acceptance": "PASS",
+      "admission_budget": {
+        "layer_estimate_safety_factor": 1.15,
+        "layers": 25,
+        "ram_required_bytes": 11796597472,
+        "scope": "declared-preflight-not-reservation-or-fit-proof",
+        "vram_headroom_bytes": 1610612736,
+        "vram_workspace_bytes": 805306368
+      },
+      "backend": {
+        "archive_sha256": "e29ad1d5063dd4b54b2492d9b00adab2cff9621bfa654b6c92aa8d6f1fdfe7fc",
+        "executable_sha256": "9eaec399fd941073f8ddfbd56e0447f77fca5c006b26b8b1874a7fb12719b2a0",
+        "tree_sha256": "b1ef71e6be00c6930c227d3357871b27dd7a3151245179ab646768b35be20859",
+        "version": "0.40.2"
+      },
+      "configuration_sha256": "0b8141ac2042bf6bef8d5a97860402bf260b4ec822a9b14def4fc3c3291f47c4",
+      "corpus": {
+        "exact": 106,
+        "exact_scope": "text.strip()==fixed-expected; repeated-corpus-not-independent-problem-count",
+        "per_case": {
+          "add": {
+            "exact": 9,
+            "responses": 9
+          },
+          "binary": {
+            "exact": 8,
+            "responses": 8
+          },
+          "capital-ko": {
+            "exact": 8,
+            "responses": 8
+          },
+          "control": {
+            "exact": 8,
+            "responses": 8
+          },
+          "extract-ko": {
+            "exact": 8,
+            "responses": 8
+          },
+          "json-read": {
+            "exact": 8,
+            "responses": 8
+          },
+          "list-count": {
+            "exact": 0,
+            "responses": 8
+          },
+          "logic": {
+            "exact": 8,
+            "responses": 8
+          },
+          "medium-ko": {
+            "exact": 8,
+            "responses": 8
+          },
+          "medium-lookup": {
+            "exact": 8,
+            "responses": 8
+          },
+          "multiply": {
+            "exact": 9,
+            "responses": 9
+          },
+          "python": {
+            "exact": 8,
+            "responses": 8
+          },
+          "translate-ko": {
+            "exact": 8,
+            "responses": 8
+          },
+          "unknown-ko": {
+            "exact": 8,
+            "responses": 8
+          }
+        },
+        "responses": 114,
+        "sha256": "cbadde268752dff94185a8ffa097a2dab8699c9415e5cbf870bee0ff3ddf9b0d",
+        "unique_cases": 14,
+        "visited_unique_cases": 14
+      },
+      "declared_sampling_stages": [
+        "preflight",
+        "loading",
+        "service",
+        "bridge",
+        "cleanup",
+        "after"
+      ],
+      "guard_triggered": false,
+      "guards": {
+        "maximum_log_bytes": 16777216,
+        "maximum_requests": 2048,
+        "maximum_sample_gap_s": 10,
+        "maximum_telemetry_bytes": 8388608,
+        "maximum_temperature_c": 85,
+        "minimum_ram_free_bytes": 3221225472,
+        "minimum_start_interval_s": 0.5,
+        "minimum_vram_free_bytes": 805306368,
+        "request_deadline_s": 120,
+        "sample_interval_s": 3
+      },
+      "identity": "54ac9e3828eabed6e82d680a955561510d7d4550fea88d327af560bb6864b44c",
+      "independent_replay": {
+        "admission_window_s": 60,
+        "artifact_sha256": "07a3c769b7a6a2932d0392110e7e9154cd7c2a5fb9f30106bb5ede81712b092f",
+        "audit_records": 352,
+        "claims": {
+          "backend_kv_reuse_disabled": false,
+          "host_or_endpoint_attestation": false,
+          "native_runtime_gpu_qualified": false,
+          "process_exclusive_vram_measured": false,
+          "quality_generalization": false,
+          "speedup_guaranteed": false,
+          "ttft_measured": false
+        },
+        "computed_responses": 114,
+        "current_source_files_compared": true,
+        "drained_requests": 1,
+        "offloaded_layers": 25,
+        "recorded_service_s": 60.069023000000016,
+        "resource_samples": 30,
+        "run_id": "99f8bdfd-f90d-481e-8299-fa80d4d4920a",
+        "run_mode": "smoke",
+        "scope": "recorded-ollama-soak-integrity",
+        "source_files_checked": 18,
+        "verdict": "PASS"
+      },
+      "latency": {
+        "max_wall_s": 1.1478486000014527,
+        "p50_wall_s": 0.28037324999968405,
+        "p95_method": "nearest-rank",
+        "p95_wall_s": 0.49684659999911673,
+        "scope": "successful-computed-nonstream-HTTP-wall; backend-KV-reuse-may-occur"
+      },
+      "launch_observation": {
+        "gpu_temperature_c": 36.0,
+        "ram_available_bytes": 20482932736,
+        "vram_free_bytes": 5866782720
+      },
+      "mode": "smoke",
+      "model": {
+        "bytes": 4280404704,
+        "filename": "Qwen3-4B-Q8_0.gguf",
+        "quantization": "Q8_0",
+        "sha256": "8c2f07f26af9747e41988551106f149b03eb9b5cb6df636027b6bf6278473300"
+      },
+      "outcome": "COMPLETED",
+      "placement": {
+        "api_ps_end": {
+          "context_length": 2048,
+          "model_digest": "9feb94d9df62784a51e8f8ca09805d15551773bf7ee026a7606a86ff5bd01469",
+          "size_bytes": 5110759422,
+          "size_vram_bytes": 3296576143
+        },
+        "api_ps_ready": {
+          "context_length": 2048,
+          "model_digest": "9feb94d9df62784a51e8f8ca09805d15551773bf7ee026a7606a86ff5bd01469",
+          "size_bytes": 5110759422,
+          "size_vram_bytes": 3296576143
+        },
+        "buffers": [
+          {
+            "device": "CUDA0",
+            "kind": "model",
+            "mib": 2849.0,
+            "runtime": "CUDA"
+          },
+          {
+            "device": "CPU",
+            "kind": "kv",
+            "mib": 96.0,
+            "runtime": "CPU"
+          },
+          {
+            "device": "CUDA0",
+            "kind": "kv",
+            "mib": 192.0,
+            "runtime": "CUDA"
+          },
+          {
+            "device": "CUDA0",
+            "kind": "compute",
+            "mib": 102.86,
+            "runtime": "CUDA"
+          }
+        ],
+        "offloaded_layers": 25,
+        "runtimes": [
+          "CPU",
+          "CUDA"
+        ],
+        "scope": "observed-partial-CUDA; no residency-control or process-exclusive-memory claim",
+        "status": "GPU_OFFLOAD_OBSERVED",
+        "total_layers": 37
+      },
+      "resources": {
+        "artifact_sha256": "501b26a11096958cb48f614afc09a190451d627ffc6d4fe98597db0449ad7a62",
+        "gpu": {
+          "driver_version": "617.42",
+          "index": 0,
+          "name": "NVIDIA GeForce RTX 5050",
+          "total_bytes": 8546942976
+        },
+        "observed_sampling_stages": [
+          "preflight",
+          "loading",
+          "service",
+          "after"
+        ],
+        "ram_total_bytes": 33646592000,
+        "sampling_stage_counts": {
+          "after": 1,
+          "loading": 5,
+          "preflight": 4,
+          "service": 20
+        },
+        "scope": "whole-host-available-RAM-and-whole-device-GPU; not process-exclusive or continuous-peak measurement",
+        "service_window": {
+          "boundary_scope": "first-and-last-observed-sample-within-window; no interpolation",
+          "first_sample_elapsed_s": 28.233598099999654,
+          "last_sample_elapsed_s": 87.61106899999868,
+          "maximum_gap_s": 3.216992500001652,
+          "metrics": {
+            "gpu_power_w": {
+              "observed_samples": 20,
+              "scope": "sample-boundary-start/end-may-be-null; min/max-known-only",
+              "statistics": {
+                "end": 47.11,
+                "max": 62.53,
+                "min": 34.05,
+                "start": 43.3
+              },
+              "unavailable_samples": 0
+            },
+            "gpu_temperature_c": {
+              "end": 40.0,
+              "max": 44.0,
+              "min": 39.0,
+              "start": 43.0
+            },
+            "gpu_utilization_percent": {
+              "end": 19.0,
+              "max": 98.0,
+              "min": 1.0,
+              "start": 85.0
+            },
+            "ram_available_bytes": {
+              "end": 17908838400,
+              "max": 18078162944,
+              "min": 17806888960,
+              "start": 17937514496
+            },
+            "vram_free_bytes": {
+              "end": 2484076544,
+              "max": 2484076544,
+              "min": 2447376384,
+              "start": 2476736512
+            },
+            "vram_used_bytes": {
+              "end": 5811208192,
+              "max": 5847908352,
+              "min": 5811208192,
+              "start": 5818548224
+            }
+          },
+          "sample_count": 20
+        },
+        "whole_run": {
+          "boundary_scope": "first-and-last-observed-sample-within-window; no interpolation",
+          "first_sample_elapsed_s": 0.08196999999927357,
+          "last_sample_elapsed_s": 89.87612219999937,
+          "maximum_gap_s": 3.216992500001652,
+          "metrics": {
+            "gpu_power_w": {
+              "observed_samples": 30,
+              "scope": "sample-boundary-start/end-may-be-null; min/max-known-only",
+              "statistics": {
+                "end": 51.48,
+                "max": 62.53,
+                "min": 27.8,
+                "start": 27.93
+              },
+              "unavailable_samples": 0
+            },
+            "gpu_temperature_c": {
+              "end": 43.0,
+              "max": 44.0,
+              "min": 36.0,
+              "start": 36.0
+            },
+            "gpu_utilization_percent": {
+              "end": 1.0,
+              "max": 98.0,
+              "min": 1.0,
+              "start": 1.0
+            },
+            "ram_available_bytes": {
+              "end": 17916592128,
+              "max": 20478730240,
+              "min": 17806888960,
+              "start": 20478730240
+            },
+            "vram_free_bytes": {
+              "end": 5879365632,
+              "max": 5879365632,
+              "min": 2447376384,
+              "start": 5866782720
+            },
+            "vram_used_bytes": {
+              "end": 2415919104,
+              "max": 5847908352,
+              "min": 2415919104,
+              "start": 2428502016
+            }
+          },
+          "sample_count": 30
+        }
+      },
+      "run_id": "99f8bdfd-f90d-481e-8299-fa80d4d4920a",
+      "source": {
+        "files": 18,
+        "sha256": {
+          "hosted/experimental/cellivane_bridge/__init__.py": "954129f056e94ac20a0511dcf8deff8b2c1b3f45f4bc81ea1b5e208bc272ab10",
+          "hosted/experimental/cellivane_bridge/__main__.py": "935a1c1166b0c1ea35a82256345000bf2c73ded718d77773bc27a71ecce28f7d",
+          "hosted/experimental/cellivane_bridge/adapters.py": "b813cb2a875205dfb4278d4224fe7a416f8f391ee03b3b5726f8d8e5b0b21c46",
+          "hosted/experimental/cellivane_bridge/cli.py": "19dc4866abbaf091f8af720ce9bec1a5ca1f1527e0133454553b186bb60c361f",
+          "hosted/experimental/cellivane_bridge/contracts.py": "528bc419f960b0dcb2ba6ebc3e14ae02026173c97ed1035dfcd49db57217c5ff",
+          "hosted/experimental/cellivane_bridge/runtime.py": "8b366b6e146651f5fdefe1ac59da44109acea35c79176b107d61092828160695",
+          "hosted/experimental/cellivane_bridge/storage.py": "d4ece1ed296134be3df40c87372cb059c8b84e7b6a4391557652c159bd821d64",
+          "hosted/experimental/cellivane_seed/__init__.py": "ca0d15cbcac3fa9ad1043ae8dda1b97f2b2a3041d199b53be3a10b160473c08a",
+          "hosted/experimental/cellivane_seed/__main__.py": "540fd0a5992ca535482a9d44b2e268ce3a39bb47a0576f301214afa5ef4494b9",
+          "hosted/experimental/cellivane_seed/core.py": "208dbf714ae1fdcc31d1bc46bbadf11daa9c7c9b31f74af9a315c8cb36d38f4b",
+          "hosted/experimental/cellivane_seed/ollama.py": "cde8ea6a3b172cf175989b1849d8e9728774439919573a2667de590f1eef12d0",
+          "hosted/experimental/cellivane_seed/placement.py": "4fc8d0bc8a17287b19fef27eb5bd34a041949a6375a9e9d9752bbafab84fc38d",
+          "hosted/experimental/cellivane_seed/server.py": "899b1370211a637b84c5c3231eb99a531d8743ad427f7d17e458ae3696841335",
+          "tools/hosted/cellivane_bridge_lab.py": "46b5416ff5f80d14b25569dbd337ece96ba90cc02ffcfe3c6360d0f3d3af2991",
+          "tools/hosted/cellivane_resource_probe.py": "e1064e5be60fcf13d781897979514226efe93335d9c4e1e4395b749decc18115",
+          "tools/hosted/cellivane_seed_compare.py": "903389655b544b3b70f2695ee3d79ede8ed2327682edceda2be63b697ed4e742",
+          "tools/hosted/cellivane_seed_lab.py": "a1c2e7a45b69d7cf4c62ae988dd8e5e2c4b4f9a08a95deaee173ae4bc7c56fda",
+          "tools/hosted/cellivane_seed_soak.py": "4abaa3155e265995b04895183000d33a3e1dbd67c07bdba10c029ec833db2519"
+        }
+      },
+      "summary_sha256": "4cee08ef399c1fc2dc4ae087420165396b3bbbda4a04e412db622730c8fe3989",
+      "terminal": {
+        "audit_records": 352,
+        "bridge_complete": true,
+        "cleanup": [
+          {
+            "assigned_before_resume": true,
+            "backend_stop_api_confirmed": false,
+            "created_suspended": true,
+            "job_active_processes": 0,
+            "job_assigned": true,
+            "job_cleanup_confirmed": true,
+            "job_closed": true,
+            "job_terminated": true,
+            "kv_release_confirmed": false,
+            "name": "ollama",
+            "primary_thread_closed": true,
+            "process_exited": true,
+            "process_handle_closed": true
+          },
+          {
+            "assigned_before_resume": true,
+            "backend_stop_api_confirmed": false,
+            "created_suspended": true,
+            "job_active_processes": 0,
+            "job_assigned": true,
+            "job_cleanup_confirmed": true,
+            "job_closed": true,
+            "job_terminated": true,
+            "kv_release_confirmed": false,
+            "name": "create",
+            "primary_thread_closed": true,
+            "process_exited": true,
+            "process_handle_closed": true
+          }
+        ],
+        "closed": true,
+        "counters": {
+          "active": 0,
+          "backend_calls": 116,
+          "cache_hits": 0,
+          "coalesced": 0,
+          "computed": 116,
+          "failures": 0,
+          "inflight": 0,
+          "rejected": 1,
+          "timeouts": 0,
+          "waiters": 0
+        },
+        "poisoned": false,
+        "ports": {
+          "seed": {
+            "closed": true,
+            "number": 18991
+          },
+          "worker": {
+            "closed": true,
+            "number": 18992
+          }
+        }
+      },
+      "timing_analysis": {
+        "bin_scope": "half-open offsets relative to service_start; start-selected rows for latency, independently counted completion timestamps",
+        "distinct_windows": false,
+        "excess_idle_formula": "max(0, idle-max(0, minimum_start_interval_s-prev.wall_s))",
+        "excess_idle_scope": "derived excess above theoretical minimum pacing; not measured log-scan or GPU-idle duration",
+        "first_minute": {
+          "backend_elapsed_p50_s": 0.24250000000029104,
+          "completed_requests": 113,
+          "http_wall_p50_s": 0.28037324999968405,
+          "idle_above_minimum_pacing_p50_s": 0.012932899997394998,
+          "loop_idle_p50_s": 0.22371990000101505,
+          "loop_idle_pairs": 113,
+          "offset_end_exclusive_s": 60,
+          "offset_start_s": 0,
+          "started_requests": 114
+        },
+        "idle_scope": "next.started-prev.completed; pair assigned to next start bin; first corpus row has no pair",
+        "interpretation_scope": "recorded loop-gap and response timing only; no causal engine degradation, leak, thermal or GPU-throughput conclusion",
+        "last_minute": {
+          "backend_elapsed_p50_s": 0.24250000000029104,
+          "completed_requests": 113,
+          "http_wall_p50_s": 0.28037324999968405,
+          "idle_above_minimum_pacing_p50_s": 0.012932899997394998,
+          "loop_idle_p50_s": 0.22371990000101505,
+          "loop_idle_pairs": 113,
+          "offset_end_exclusive_s": 60,
+          "offset_start_s": 0,
+          "started_requests": 114
+        },
+        "minimum_start_interval_s": 0.5,
+        "unmeasured_candidate": {
+          "causality_demonstrated": false,
+          "mechanism": "per-iteration whole-growing-backend-log read and regex scan",
+          "source": "tools/hosted/cellivane_seed_soak.py"
+        }
+      },
+      "window": {
+        "admission_s": 60,
+        "drained_requests": 1,
+        "observed_service_s": 60.069023000000016,
+        "scope": "admission-window-plus-current-request-and-postresponse-audit/log-work; excludes preparation and separate bridge; not precise GPU drain timing",
+        "service_overrun_s": 0.0690230000000156,
+        "warmup_wall_s": 9.625578700000915
+      }
+    },
+    "final_soak": {
+      "acceptance": "PASS",
+      "admission_budget": {
+        "layer_estimate_safety_factor": 1.15,
+        "layers": 21,
+        "ram_required_bytes": 12543976256,
+        "scope": "declared-preflight-not-reservation-or-fit-proof",
+        "vram_headroom_bytes": 1610612736,
+        "vram_workspace_bytes": 805306368
+      },
+      "backend": {
+        "archive_sha256": "e29ad1d5063dd4b54b2492d9b00adab2cff9621bfa654b6c92aa8d6f1fdfe7fc",
+        "executable_sha256": "9eaec399fd941073f8ddfbd56e0447f77fca5c006b26b8b1874a7fb12719b2a0",
+        "tree_sha256": "b1ef71e6be00c6930c227d3357871b27dd7a3151245179ab646768b35be20859",
+        "version": "0.40.2"
+      },
+      "configuration_sha256": "84874d37ea700e6f04b5c16f67d2f66db0a8be8f6fbee985fb178839673a6e91",
+      "corpus": {
+        "exact": 1371,
+        "exact_scope": "text.strip()==fixed-expected; repeated-corpus-not-independent-problem-count",
+        "per_case": {
+          "add": {
+            "exact": 106,
+            "responses": 106
+          },
+          "binary": {
+            "exact": 105,
+            "responses": 105
+          },
+          "capital-ko": {
+            "exact": 106,
+            "responses": 106
+          },
+          "control": {
+            "exact": 106,
+            "responses": 106
+          },
+          "extract-ko": {
+            "exact": 106,
+            "responses": 106
+          },
+          "json-read": {
+            "exact": 105,
+            "responses": 105
+          },
+          "list-count": {
+            "exact": 0,
+            "responses": 105
+          },
+          "logic": {
+            "exact": 105,
+            "responses": 105
+          },
+          "medium-ko": {
+            "exact": 105,
+            "responses": 105
+          },
+          "medium-lookup": {
+            "exact": 105,
+            "responses": 105
+          },
+          "multiply": {
+            "exact": 106,
+            "responses": 106
+          },
+          "python": {
+            "exact": 105,
+            "responses": 105
+          },
+          "translate-ko": {
+            "exact": 106,
+            "responses": 106
+          },
+          "unknown-ko": {
+            "exact": 105,
+            "responses": 105
+          }
+        },
+        "responses": 1476,
+        "sha256": "cbadde268752dff94185a8ffa097a2dab8699c9415e5cbf870bee0ff3ddf9b0d",
+        "unique_cases": 14,
+        "visited_unique_cases": 14
+      },
+      "declared_sampling_stages": [
+        "preflight",
+        "loading",
+        "service",
+        "bridge",
+        "cleanup",
+        "after"
+      ],
+      "guard_triggered": false,
+      "guards": {
+        "maximum_log_bytes": 16777216,
+        "maximum_requests": 2048,
+        "maximum_sample_gap_s": 10,
+        "maximum_telemetry_bytes": 8388608,
+        "maximum_temperature_c": 85,
+        "minimum_ram_free_bytes": 3221225472,
+        "minimum_start_interval_s": 0.5,
+        "minimum_vram_free_bytes": 805306368,
+        "request_deadline_s": 120,
+        "sample_interval_s": 3
+      },
+      "identity": "7cd7ad521803af3def1722d632ae44f2b9b2665c37f5417117c79af21a1f5cb6",
+      "independent_replay": {
+        "admission_window_s": 900,
+        "artifact_sha256": "96ce7fb280f645c501c5d52ba438c2d6b7d7aa8375a403e719e74572bb90e93c",
+        "audit_records": 4438,
+        "claims": {
+          "backend_kv_reuse_disabled": false,
+          "host_or_endpoint_attestation": false,
+          "native_runtime_gpu_qualified": false,
+          "process_exclusive_vram_measured": false,
+          "quality_generalization": false,
+          "speedup_guaranteed": false,
+          "ttft_measured": false
+        },
+        "computed_responses": 1476,
+        "current_source_files_compared": true,
+        "drained_requests": 0,
+        "offloaded_layers": 21,
+        "recorded_service_s": 900.2086455000026,
+        "resource_samples": 295,
+        "run_id": "b449a358-2941-4091-81d1-2bb4b65bdf12",
+        "run_mode": "soak",
+        "scope": "recorded-ollama-soak-integrity",
+        "source_files_checked": 18,
+        "verdict": "PASS"
+      },
+      "latency": {
+        "max_wall_s": 1.6593243000024813,
+        "p50_wall_s": 0.2979610499987757,
+        "p95_method": "nearest-rank",
+        "p95_wall_s": 0.646281799999997,
+        "scope": "successful-computed-nonstream-HTTP-wall; backend-KV-reuse-may-occur"
+      },
+      "launch_observation": {
+        "gpu_temperature_c": 34.0,
+        "ram_available_bytes": 20355788800,
+        "vram_free_bytes": 5851054080
+      },
+      "mode": "soak",
+      "model": {
+        "bytes": 5027783488,
+        "filename": "Qwen3-8B-Q4_K_M.gguf",
+        "quantization": "Q4_K_M",
+        "sha256": "d98cdcbd03e17ce47681435b5150e34c1417f50b5c0019dd560e4882c5745785"
+      },
+      "outcome": "COMPLETED",
+      "placement": {
+        "api_ps_end": {
+          "context_length": 2048,
+          "model_digest": "eb3d78d955c65616198965c62982731356dfa5b4211ffadae8637b7a13124940",
+          "size_bytes": 5453811546,
+          "size_vram_bytes": 3100597288
+        },
+        "api_ps_ready": {
+          "context_length": 2048,
+          "model_digest": "eb3d78d955c65616198965c62982731356dfa5b4211ffadae8637b7a13124940",
+          "size_bytes": 5453811546,
+          "size_vram_bytes": 3100597288
+        },
+        "buffers": [
+          {
+            "device": "CUDA0",
+            "kind": "model",
+            "mib": 2691.58,
+            "runtime": "CUDA"
+          },
+          {
+            "device": "CPU",
+            "kind": "kv",
+            "mib": 128.0,
+            "runtime": "CPU"
+          },
+          {
+            "device": "CUDA0",
+            "kind": "kv",
+            "mib": 160.0,
+            "runtime": "CUDA"
+          },
+          {
+            "device": "CUDA0",
+            "kind": "compute",
+            "mib": 105.38,
+            "runtime": "CUDA"
+          }
+        ],
+        "offloaded_layers": 21,
+        "runtimes": [
+          "CPU",
+          "CUDA"
+        ],
+        "scope": "observed-partial-CUDA; no residency-control or process-exclusive-memory claim",
+        "status": "GPU_OFFLOAD_OBSERVED",
+        "total_layers": 37
+      },
+      "resources": {
+        "artifact_sha256": "9700f6309525dfdf368aa224294291f928592365886b753372ec6be36e766157",
+        "gpu": {
+          "driver_version": "617.42",
+          "index": 0,
+          "name": "NVIDIA GeForce RTX 5050",
+          "total_bytes": 8546942976
+        },
+        "observed_sampling_stages": [
+          "preflight",
+          "loading",
+          "service",
+          "bridge",
+          "after"
+        ],
+        "ram_total_bytes": 33646592000,
+        "sampling_stage_counts": {
+          "after": 1,
+          "bridge": 1,
+          "loading": 6,
+          "preflight": 4,
+          "service": 283
+        },
+        "scope": "whole-host-available-RAM-and-whole-device-GPU; not process-exclusive or continuous-peak measurement",
+        "service_window": {
+          "boundary_scope": "first-and-last-observed-sample-within-window; no interpolation",
+          "first_sample_elapsed_s": 31.382977699999174,
+          "last_sample_elapsed_s": 928.354294599998,
+          "maximum_gap_s": 3.593673999999737,
+          "metrics": {
+            "gpu_power_w": {
+              "observed_samples": 283,
+              "scope": "sample-boundary-start/end-may-be-null; min/max-known-only",
+              "statistics": {
+                "end": 35.85,
+                "max": 60.85,
+                "min": 32.42,
+                "start": 58.0
+              },
+              "unavailable_samples": 0
+            },
+            "gpu_temperature_c": {
+              "end": 42.0,
+              "max": 45.0,
+              "min": 39.0,
+              "start": 41.0
+            },
+            "gpu_utilization_percent": {
+              "end": 16.0,
+              "max": 98.0,
+              "min": 1.0,
+              "start": 4.0
+            },
+            "ram_available_bytes": {
+              "end": 17294249984,
+              "max": 17500192768,
+              "min": 17245847552,
+              "start": 17377026048
+            },
+            "vram_free_bytes": {
+              "end": 2679111680,
+              "max": 2685403136,
+              "min": 2619342848,
+              "start": 2685403136
+            },
+            "vram_used_bytes": {
+              "end": 5616173056,
+              "max": 5675941888,
+              "min": 5609881600,
+              "start": 5609881600
+            }
+          },
+          "sample_count": 283
+        },
+        "whole_run": {
+          "boundary_scope": "first-and-last-observed-sample-within-window; no interpolation",
+          "first_sample_elapsed_s": 0.09022270000059507,
+          "last_sample_elapsed_s": 932.3875411999979,
+          "maximum_gap_s": 3.593673999999737,
+          "metrics": {
+            "gpu_power_w": {
+              "observed_samples": 295,
+              "scope": "sample-boundary-start/end-may-be-null; min/max-known-only",
+              "statistics": {
+                "end": 58.64,
+                "max": 60.85,
+                "min": 16.16,
+                "start": 16.32
+              },
+              "unavailable_samples": 0
+            },
+            "gpu_temperature_c": {
+              "end": 45.0,
+              "max": 45.0,
+              "min": 34.0,
+              "start": 34.0
+            },
+            "gpu_utilization_percent": {
+              "end": 17.0,
+              "max": 98.0,
+              "min": 1.0,
+              "start": 1.0
+            },
+            "ram_available_bytes": {
+              "end": 17311178752,
+              "max": 20376313856,
+              "min": 17245847552,
+              "start": 20376313856
+            },
+            "vram_free_bytes": {
+              "end": 5879365632,
+              "max": 5879365632,
+              "min": 2619342848,
+              "start": 5878317056
+            },
+            "vram_used_bytes": {
+              "end": 2415919104,
+              "max": 5675941888,
+              "min": 2415919104,
+              "start": 2416967680
+            }
+          },
+          "sample_count": 295
+        }
+      },
+      "run_id": "b449a358-2941-4091-81d1-2bb4b65bdf12",
+      "source": {
+        "files": 18,
+        "sha256": {
+          "hosted/experimental/cellivane_bridge/__init__.py": "954129f056e94ac20a0511dcf8deff8b2c1b3f45f4bc81ea1b5e208bc272ab10",
+          "hosted/experimental/cellivane_bridge/__main__.py": "935a1c1166b0c1ea35a82256345000bf2c73ded718d77773bc27a71ecce28f7d",
+          "hosted/experimental/cellivane_bridge/adapters.py": "b813cb2a875205dfb4278d4224fe7a416f8f391ee03b3b5726f8d8e5b0b21c46",
+          "hosted/experimental/cellivane_bridge/cli.py": "19dc4866abbaf091f8af720ce9bec1a5ca1f1527e0133454553b186bb60c361f",
+          "hosted/experimental/cellivane_bridge/contracts.py": "528bc419f960b0dcb2ba6ebc3e14ae02026173c97ed1035dfcd49db57217c5ff",
+          "hosted/experimental/cellivane_bridge/runtime.py": "8b366b6e146651f5fdefe1ac59da44109acea35c79176b107d61092828160695",
+          "hosted/experimental/cellivane_bridge/storage.py": "d4ece1ed296134be3df40c87372cb059c8b84e7b6a4391557652c159bd821d64",
+          "hosted/experimental/cellivane_seed/__init__.py": "ca0d15cbcac3fa9ad1043ae8dda1b97f2b2a3041d199b53be3a10b160473c08a",
+          "hosted/experimental/cellivane_seed/__main__.py": "540fd0a5992ca535482a9d44b2e268ce3a39bb47a0576f301214afa5ef4494b9",
+          "hosted/experimental/cellivane_seed/core.py": "208dbf714ae1fdcc31d1bc46bbadf11daa9c7c9b31f74af9a315c8cb36d38f4b",
+          "hosted/experimental/cellivane_seed/ollama.py": "cde8ea6a3b172cf175989b1849d8e9728774439919573a2667de590f1eef12d0",
+          "hosted/experimental/cellivane_seed/placement.py": "4fc8d0bc8a17287b19fef27eb5bd34a041949a6375a9e9d9752bbafab84fc38d",
+          "hosted/experimental/cellivane_seed/server.py": "899b1370211a637b84c5c3231eb99a531d8743ad427f7d17e458ae3696841335",
+          "tools/hosted/cellivane_bridge_lab.py": "46b5416ff5f80d14b25569dbd337ece96ba90cc02ffcfe3c6360d0f3d3af2991",
+          "tools/hosted/cellivane_resource_probe.py": "e1064e5be60fcf13d781897979514226efe93335d9c4e1e4395b749decc18115",
+          "tools/hosted/cellivane_seed_compare.py": "903389655b544b3b70f2695ee3d79ede8ed2327682edceda2be63b697ed4e742",
+          "tools/hosted/cellivane_seed_lab.py": "a1c2e7a45b69d7cf4c62ae988dd8e5e2c4b4f9a08a95deaee173ae4bc7c56fda",
+          "tools/hosted/cellivane_seed_soak.py": "4abaa3155e265995b04895183000d33a3e1dbd67c07bdba10c029ec833db2519"
+        }
+      },
+      "summary_sha256": "d8dee07259dcbbebda5e1abcbe851237d5643f2292235259be2ac2c1f29d7a3f",
+      "terminal": {
+        "audit_records": 4438,
+        "bridge_complete": true,
+        "cleanup": [
+          {
+            "assigned_before_resume": true,
+            "backend_stop_api_confirmed": false,
+            "created_suspended": true,
+            "job_active_processes": 0,
+            "job_assigned": true,
+            "job_cleanup_confirmed": true,
+            "job_closed": true,
+            "job_terminated": true,
+            "kv_release_confirmed": false,
+            "name": "ollama",
+            "primary_thread_closed": true,
+            "process_exited": true,
+            "process_handle_closed": true
+          },
+          {
+            "assigned_before_resume": true,
+            "backend_stop_api_confirmed": false,
+            "created_suspended": true,
+            "job_active_processes": 0,
+            "job_assigned": true,
+            "job_cleanup_confirmed": true,
+            "job_closed": true,
+            "job_terminated": true,
+            "kv_release_confirmed": false,
+            "name": "create",
+            "primary_thread_closed": true,
+            "process_exited": true,
+            "process_handle_closed": true
+          }
+        ],
+        "closed": true,
+        "counters": {
+          "active": 0,
+          "backend_calls": 1478,
+          "cache_hits": 0,
+          "coalesced": 0,
+          "computed": 1478,
+          "failures": 0,
+          "inflight": 0,
+          "rejected": 1,
+          "timeouts": 0,
+          "waiters": 0
+        },
+        "poisoned": false,
+        "ports": {
+          "seed": {
+            "closed": true,
+            "number": 18991
+          },
+          "worker": {
+            "closed": true,
+            "number": 18992
+          }
+        }
+      },
+      "timing_analysis": {
+        "bin_scope": "half-open offsets relative to service_start; start-selected rows for latency, independently counted completion timestamps",
+        "distinct_windows": true,
+        "excess_idle_formula": "max(0, idle-max(0, minimum_start_interval_s-prev.wall_s))",
+        "excess_idle_scope": "derived excess above theoretical minimum pacing; not measured log-scan or GPU-idle duration",
+        "first_minute": {
+          "backend_elapsed_p50_s": 0.2809999999990396,
+          "completed_requests": 107,
+          "http_wall_p50_s": 0.322696300001553,
+          "idle_above_minimum_pacing_p50_s": 0.01272419999986596,
+          "loop_idle_p50_s": 0.17763489999924786,
+          "loop_idle_pairs": 106,
+          "offset_end_exclusive_s": 60,
+          "offset_start_s": 0,
+          "started_requests": 107
+        },
+        "idle_scope": "next.started-prev.completed; pair assigned to next start bin; first corpus row has no pair",
+        "interpretation_scope": "recorded loop-gap and response timing only; no causal engine degradation, leak, thermal or GPU-throughput conclusion",
+        "last_minute": {
+          "backend_elapsed_p50_s": 0.26599999999962165,
+          "completed_requests": 83,
+          "http_wall_p50_s": 0.2948354999989533,
+          "idle_above_minimum_pacing_p50_s": 0.15526110000064364,
+          "loop_idle_p50_s": 0.34851330000128655,
+          "loop_idle_pairs": 82,
+          "offset_end_exclusive_s": 900,
+          "offset_start_s": 840,
+          "started_requests": 82
+        },
+        "minimum_start_interval_s": 0.5,
+        "unmeasured_candidate": {
+          "causality_demonstrated": false,
+          "mechanism": "per-iteration whole-growing-backend-log read and regex scan",
+          "source": "tools/hosted/cellivane_seed_soak.py"
+        }
+      },
+      "window": {
+        "admission_s": 900,
+        "drained_requests": 0,
+        "observed_service_s": 900.2086455000026,
+        "scope": "admission-window-plus-current-request-and-postresponse-audit/log-work; excludes preparation and separate bridge; not precise GPU drain timing",
+        "service_overrun_s": 0.2086455000026035,
+        "warmup_wall_s": 10.6694193000003
+      }
+    }
+  },
+  "generated_at_utc": "2026-10-16T04:10:51.330934+00:00",
+  "preserved_diagnostics": [
+    {
+      "acceptance": "FAIL",
+      "corpus_responses_before_failure": 0,
+      "error": "RuntimeError:soak-partial-cuda-not-observed",
+      "outcome": "FAILED",
+      "run_id": "0024be9a-0fa8-4a1d-8701-4b47b6531905",
+      "scope": "preserved-diagnostic; not a successful smoke or sustained-run result",
+      "service_window_started": false,
+      "summary_sha256": "f7f72591228b8000fc0bb13429d0bf58e962fcbfbb8474b4c330c568907e9e3b",
+      "terminal_counters": {
+        "active": 0,
+        "backend_calls": 1,
+        "cache_hits": 0,
+        "coalesced": 0,
+        "computed": 1,
+        "failures": 0,
+        "inflight": 0,
+        "rejected": 0,
+        "timeouts": 0,
+        "waiters": 0
+      }
+    },
+    {
+      "acceptance": "FAIL",
+      "corpus_responses_before_failure": 111,
+      "error": "ValueError:bridge-deadline",
+      "outcome": "FAILED",
+      "run_id": "b55bb992-18fa-40d2-a443-2dc14d811600",
+      "scope": "preserved-diagnostic; not a successful smoke or sustained-run result",
+      "service_window_started": true,
+      "summary_sha256": "55e81c8ab6d328cfbecb79cc9f7b4e27ede56ba17d94710ff8cc441a3cf882cd",
+      "terminal_counters": {
+        "active": 0,
+        "backend_calls": 112,
+        "cache_hits": 0,
+        "coalesced": 0,
+        "computed": 112,
+        "failures": 0,
+        "inflight": 0,
+        "rejected": 1,
+        "timeouts": 0,
+        "waiters": 0
+      }
+    }
+  ],
+  "preserved_prior_evidence": {
+    "baseline_sha256": "e2332383df336efaea5c2f98573e6692811d81a2cc6d5b22f6d57cb4b1a61d60",
+    "native_cpu_runtime_unchanged": true,
+    "public_aggregates": {
+      "murphy_0_2": {
+        "sha256": "54c51e3fc0e9d7e5b2037b9cdfa4a8eb041e6e31749afdfab47ba444a438fab0",
+        "unchanged": true
+      },
+      "runtime_0_1": {
+        "sha256": "b0737dcbd6aab9843acb6d57ec0756095d22aa778e245c01034fd60940d8a49a",
+        "unchanged": true
+      }
+    },
+    "source_families": {
+      "controller8": {
+        "files": 8,
+        "sha256_map_digest": "5428cfeed8de71540ea8d84d4d67437302e387778f3a72a75109d6e0e69e6fba",
+        "unchanged": true
+      },
+      "runtime26": {
+        "files": 26,
+        "sha256_map_digest": "65b7344f1accb0721f8e153af2b2af25c6e6a49ea4f34893d0a96299d6c20aa1",
+        "unchanged": true
+      }
+    }
+  },
+  "publication_scope": "allowlisted metadata/statistics/hashes only; private raw evidence and assets remain local",
+  "regression": {
+    "elapsed_s": 114.859,
+    "log_sha256": "be74826167dc296459153233c91c001bce991c22d858fb3debb47b17214d21fd",
+    "minimum_full_suite_tests": 631,
+    "outcome": "PASS",
+    "scope": "recorded-terminal-unittest-result; not CI or model execution",
+    "skipped": 0,
+    "tests": 681
+  },
+  "schema_version": 1,
+  "scope": "fixed-model-single-GPU-partial-offload-and-repeated-corpus-functional-resource-observation",
+  "status": "PARTIAL / experimental",
+  "verification_source_scope": "current-three-file-reader-closure-hash-compared-to-frozen-baseline; not loader attestation",
+  "verification_source_sha256": {
+    "tools/hosted/verify_cellivane_bridge.py": "6e43b848aed1d59b256a3a32b904ee59b04e6d9ac03853ac774ab8de1acb898a",
+    "tools/hosted/verify_cellivane_comparison.py": "6e33b097af3624c4f0305805a81bba23cf2b8c16b33462bf5253f1b0965425b4",
+    "tools/hosted/verify_cellivane_soak.py": "988de575c3b2e7dfd43ca5ff688a90659b24bf2f4f086121b144e4604fc4e630"
+  }
+}

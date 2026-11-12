@@ -1,0 +1,1423 @@
+/*
+ * AIOS Kernel - AI System Call Interface Implementation
+ * AI-Native Operating System
+ *
+ * This module implements the AI-native system call interface.
+ * It provides the bridge between user-space AI applications
+ * and kernel-level AI services.
+ *
+ * The syscall dispatcher routes incoming requests to the
+ * appropriate kernel subsystem (memory manager, scheduler,
+ * accelerator HAL, or model registry).
+ */
+
+#include <runtime/ai_syscall.h>
+#include <drivers/vga.h>
+#include <drivers/pci_core.h>
+#include <kernel/acpi.h>
+#include <kernel/health.h>
+#include <kernel/kernel_room.h>
+#include <kernel/spinlock.h>
+#include <kernel/time.h>
+#include <kernel/user_access.h>
+#include <kernel/user_mode.h>
+#include <lib/string.h>
+#include <mm/memory_fabric.h>
+#include <runtime/autonomy.h>
+#include <runtime/nodebit.h>
+#include <runtime/slm_orchestrator.h>
+
+/* ============================================================
+ * Model Registry
+ * ============================================================ */
+
+#define MAX_MODELS_REGISTRY 64
+
+static model_info_t model_registry[MAX_MODELS_REGISTRY];
+static uint32_t model_count = 0;
+static model_id_t next_model_id = 1;
+
+typedef struct {
+    bool                    registered;
+    uint32_t                ring_id;
+    uint32_t                notify_count;
+    uint32_t                last_submit_tail;
+    uint64_t                last_notify_ns;
+    ai_ring_registration_t  registration;
+} infer_ring_state_t;
+
+static infer_ring_state_t infer_ring_table[AI_INFER_RING_CAPACITY];
+AIOS_STATIC_ASSERT(ARRAY_SIZE(infer_ring_table) == AI_INFER_RING_CAPACITY,
+    "Inference ring table must match its public capacity");
+static uint32_t infer_ring_count = 0;
+static spinlock_t model_registry_lock = SPINLOCK_INIT;
+static spinlock_t infer_ring_lock = SPINLOCK_INIT;
+
+/* Syscall statistics */
+static struct {
+    uint64_t total_calls;
+    uint64_t model_calls;
+    uint64_t tensor_calls;
+    uint64_t infer_calls;
+    uint64_t train_calls;
+    uint64_t accel_calls;
+    uint64_t pipe_calls;
+    uint64_t info_calls;
+    uint64_t invalid_calls;
+} syscall_stats;
+
+/* ============================================================
+ * Internal Helpers
+ * ============================================================ */
+
+static model_info_t *find_model_locked(model_id_t id) {
+    for (uint32_t i = 0; i < model_count; i++) {
+        if (model_registry[i].id == id) {
+            return &model_registry[i];
+        }
+    }
+    return NULL;
+}
+
+static infer_ring_state_t *find_infer_ring_locked(uint32_t ring_id) {
+    for (uint32_t i = 0; i < infer_ring_count; i++) {
+        if (infer_ring_table[i].registered && infer_ring_table[i].ring_id == ring_id) {
+            return &infer_ring_table[i];
+        }
+    }
+
+    return NULL;
+}
+
+static aios_status_t syscall_output_buffer_status(const void *ptr, uint64_t size) {
+    user_access_check_t check = user_access_probe(ptr, size, USER_ACCESS_F_WRITE);
+
+    if (!check.ok) {
+        return user_access_status(check.reason);
+    }
+
+    return AIOS_OK;
+}
+
+static aios_status_t syscall_optional_output_buffer_status(const void *ptr,
+                                                           uint64_t size) {
+    if (!ptr) {
+        return AIOS_OK;
+    }
+
+    return syscall_output_buffer_status(ptr, size);
+}
+
+static void copy_str(char *dst, const char *src, uint32_t max_len) {
+    uint32_t i = 0;
+    while (i + 1 < max_len && src[i]) {
+        dst[i] = src[i];
+        i++;
+    }
+    dst[i] = '\0';
+}
+
+static uint32_t model_registry_snapshot(model_info_t *out, uint32_t cap) {
+    uint32_t count = 0;
+
+    spinlock_lock(&model_registry_lock);
+    count = model_count;
+    if (count > cap) {
+        count = cap;
+    }
+    for (uint32_t i = 0; i < count; i++) {
+        out[i] = model_registry[i];
+    }
+    spinlock_unlock(&model_registry_lock);
+
+    return count;
+}
+
+static aios_status_t ai_syscall_contract_selftest(void);
+static aios_status_t sys_tensor_create(tensor_shape_t *shape,
+                                       mem_region_type_t region,
+                                       tensor_alloc_t *out);
+static aios_status_t sys_info_memory(mem_stats_t *out);
+static aios_status_t sys_info_scheduler(sched_stats_t *out);
+
+/* ============================================================
+ * Public API Implementation
+ * ============================================================ */
+
+aios_status_t ai_syscall_init(void) {
+    /* Initialize model registry */
+    spinlock_lock(&model_registry_lock);
+    model_count = 0;
+    next_model_id = 1;
+    spinlock_unlock(&model_registry_lock);
+
+    /* Clear statistics */
+    syscall_stats.total_calls = 0;
+    syscall_stats.model_calls = 0;
+    syscall_stats.tensor_calls = 0;
+    syscall_stats.infer_calls = 0;
+    syscall_stats.train_calls = 0;
+    syscall_stats.accel_calls = 0;
+    syscall_stats.pipe_calls = 0;
+    syscall_stats.info_calls = 0;
+    syscall_stats.invalid_calls = 0;
+    spinlock_lock(&infer_ring_lock);
+    infer_ring_count = 0;
+    for (uint32_t i = 0; i < AI_INFER_RING_CAPACITY; i++) {
+        infer_ring_table[i].registered = false;
+        infer_ring_table[i].ring_id = 0;
+        infer_ring_table[i].notify_count = 0;
+        infer_ring_table[i].last_submit_tail = 0;
+        infer_ring_table[i].last_notify_ns = 0;
+    }
+    spinlock_unlock(&infer_ring_lock);
+
+    kprintf("\n");
+    kprintf("    AI System Call Interface initialized:\n");
+    kprintf("    Syscall ranges:\n");
+    kprintf("      Model Management:  0x100 - 0x1FF\n");
+    kprintf("      Tensor Operations: 0x200 - 0x2FF\n");
+    kprintf("      Inference:         0x300 - 0x3FF\n");
+    kprintf("      Training:          0x400 - 0x4FF\n");
+    kprintf("      Accelerator:       0x500 - 0x5FF\n");
+    kprintf("      Pipeline:          0x600 - 0x6FF\n");
+    kprintf("      System Info:       0x700 - 0x7FF\n");
+    kprintf("    Max Models: %u\n", (uint64_t)MAX_MODELS_REGISTRY);
+
+    aios_status_t uaccess_status = user_access_selftest();
+    if (uaccess_status != AIOS_OK) {
+        return uaccess_status;
+    }
+    kprintf("    User access selftest: structural checks OK\n");
+
+    aios_status_t contract_status = ai_syscall_contract_selftest();
+    if (contract_status != AIOS_OK) {
+        return contract_status;
+    }
+    kprintf("    Contract selftest: input/output guards OK\n");
+
+    return AIOS_OK;
+}
+
+/* Main syscall dispatcher - called from interrupt handler */
+int64_t ai_syscall_dispatch(uint64_t syscall_num, uint64_t arg1,
+                            uint64_t arg2, uint64_t arg3,
+                            uint64_t arg4, uint64_t arg5) {
+    uint32_t observed_model_count = 0;
+
+    syscall_stats.total_calls++;
+
+    /* Continuous telemetry feed for autonomous control loop */
+    spinlock_lock(&model_registry_lock);
+    observed_model_count = model_count;
+    spinlock_unlock(&model_registry_lock);
+    autonomy_collect_telemetry(observed_model_count, accel_get_count());
+
+    /* Route based on syscall number range */
+    uint32_t category = (syscall_num >> 8) & 0xFF;
+
+    switch (category) {
+        case 0x01: /* Model management */
+            syscall_stats.model_calls++;
+            switch (syscall_num) {
+                case SYS_MODEL_LOAD:
+                    return (int64_t)sys_model_load((syscall_model_load_t *)arg1);
+                case SYS_MODEL_UNLOAD:
+                    return (int64_t)sys_model_unload((model_id_t)arg1);
+                case SYS_MODEL_INFO:
+                    return (int64_t)sys_model_info((model_id_t)arg1,
+                                                    (model_info_t *)arg2);
+                default:
+                    break;
+            }
+            break;
+
+        case 0x02: /* Tensor operations */
+            syscall_stats.tensor_calls++;
+            switch (syscall_num) {
+                case SYS_TENSOR_CREATE: {
+                    tensor_shape_t *shape = (tensor_shape_t *)arg1;
+                    mem_region_type_t region = (mem_region_type_t)arg2;
+                    tensor_alloc_t *out = (tensor_alloc_t *)arg3;
+                    return (int64_t)sys_tensor_create(shape, region, out);
+                }
+                case SYS_TENSOR_DESTROY:
+                    return (int64_t)tensor_free((tensor_id_t)arg1);
+                default:
+                    break;
+            }
+            break;
+
+        case 0x03: /* Inference */
+            syscall_stats.infer_calls++;
+            switch (syscall_num) {
+                case SYS_INFER_SUBMIT:
+                    return (int64_t)sys_infer_submit((syscall_infer_t *)arg1);
+                case SYS_INFER_WAIT:
+                    return (int64_t)sys_infer_wait((task_id_t)arg1);
+                case SYS_INFER_CANCEL:
+                    return (int64_t)sys_infer_cancel((task_id_t)arg1);
+                case SYS_INFER_RING_SETUP:
+                    return (int64_t)sys_infer_ring_setup((syscall_infer_ring_setup_t *)arg1);
+                case SYS_INFER_RING_NOTIFY:
+                    return (int64_t)sys_infer_ring_notify((syscall_infer_ring_notify_t *)arg1);
+                case SYS_INFER_RING_WAIT_CQ:
+                    return (int64_t)sys_infer_ring_wait_cq((syscall_infer_ring_wait_t *)arg1);
+                case SYS_INFER_RING_STATUS:
+                    return (int64_t)sys_infer_ring_status((uint32_t)arg1,
+                                                          (syscall_infer_ring_status_t *)arg2);
+                default:
+                    break;
+            }
+            break;
+
+        case 0x04: /* Training */
+            syscall_stats.train_calls++;
+            switch (syscall_num) {
+                case SYS_TRAIN_FORWARD:
+                    return (int64_t)sys_train_forward((syscall_train_t *)arg1);
+                case SYS_TRAIN_BACKWARD:
+                    return (int64_t)sys_train_backward((model_id_t)arg1);
+                default:
+                    break;
+            }
+            break;
+
+        case 0x05: /* Accelerator */
+            syscall_stats.accel_calls++;
+            switch (syscall_num) {
+                case SYS_ACCEL_LIST: {
+                    uint32_t count = accel_get_count();
+                    return (int64_t)count;
+                }
+                case SYS_ACCEL_SYNC:
+                    return (int64_t)accel_sync((accel_id_t)arg1);
+                default:
+                    break;
+            }
+            break;
+
+        case 0x06: /* Pipeline orchestration */
+            syscall_stats.pipe_calls++;
+            switch (syscall_num) {
+                case SYS_PIPE_CREATE:
+                    return (int64_t)sys_pipe_create((syscall_pipe_create_t *)arg1);
+                case SYS_PIPE_ADD_STAGE:
+                    return (int64_t)sys_pipe_add_stage((syscall_pipe_add_stage_t *)arg1);
+                case SYS_PIPE_EXECUTE:
+                    return (int64_t)sys_pipe_execute((syscall_pipe_execute_t *)arg1);
+                case SYS_PIPE_DESTROY:
+                    return (int64_t)sys_pipe_destroy((syscall_pipe_destroy_t *)arg1);
+                case SYS_PIPE_STATS:
+                    return (int64_t)sys_pipe_stats((node_pipeline_snapshot_t *)arg1);
+                default:
+                    break;
+            }
+            break;
+
+        case 0x07: /* System info */
+            syscall_stats.info_calls++;
+            switch (syscall_num) {
+                case SYS_INFO_MEMORY:
+                    return (int64_t)sys_info_memory((mem_stats_t *)arg1);
+                case SYS_INFO_SCHEDULER:
+                    return (int64_t)sys_info_scheduler((sched_stats_t *)arg1);
+                case SYS_INFO_SYSTEM:
+                    sys_info_dump();
+                    return AIOS_OK;
+                case SYS_INFO_HEALTH:
+                    return (int64_t)sys_info_health((kernel_health_summary_t *)arg1);
+                case SYS_INFO_ROOM:
+                    return (int64_t)sys_info_room((kernel_room_snapshot_t *)arg1);
+                case SYS_INFO_BOOTSTRAP:
+                    return (int64_t)sys_info_bootstrap((aios_bootstrap_info_t *)arg1);
+                case SYS_INFO_RESOURCE:
+                    return (int64_t)sys_info_resource(
+                        (ai_resource_snapshot_request_t *)arg1);
+                case SYS_AUTONOMY_ACTION_PROPOSE:
+                    return (int64_t)sys_autonomy_action_propose((autonomy_action_req_t *)arg1);
+                case SYS_AUTONOMY_ACTION_COMMIT:
+                    return (int64_t)sys_autonomy_action_commit((policy_eval_t *)arg1);
+                case SYS_AUTONOMY_ROLLBACK_LAST:
+                    return (int64_t)sys_autonomy_rollback_last();
+                case SYS_AUTONOMY_STATS:
+                    return (int64_t)sys_autonomy_stats((autonomy_stats_t *)arg1);
+                case SYS_AUTONOMY_MODE_SET:
+                    return (int64_t)sys_autonomy_mode_set((syscall_autonomy_mode_t *)arg1);
+                case SYS_AUTONOMY_TELEMETRY_LAST:
+                    return (int64_t)sys_autonomy_telemetry_last((telemetry_frame_t *)arg1);
+                case SYS_SLM_HW_SNAPSHOT:
+                    return (int64_t)sys_slm_hw_snapshot((slm_hw_snapshot_t *)arg1);
+                case SYS_SLM_PLAN_SUBMIT:
+                    return (int64_t)sys_slm_plan_submit((slm_plan_request_t *)arg1,
+                                                        (uint32_t *)arg2);
+                case SYS_SLM_PLAN_APPLY:
+                    return (int64_t)sys_slm_plan_apply((uint32_t)arg1);
+                case SYS_SLM_PLAN_STATUS:
+                    return (int64_t)sys_slm_plan_status((uint32_t)arg1,
+                                                        (slm_plan_t *)arg2);
+                case SYS_SLM_PLAN_LIST:
+                    return (int64_t)sys_slm_plan_list((slm_plan_list_t *)arg1);
+                case SYS_SLM_NODEBIT_LOOKUP:
+                    return (int64_t)sys_slm_nodebit_lookup((uint16_t)arg1,
+                                                           (slm_nodebit_t *)arg2);
+                case SYS_NODEBIT_REGISTER:
+                    return (int64_t)sys_nodebit_register(
+                        (syscall_nodebit_register_t *)arg1);
+                case SYS_NODEBIT_UPDATE:
+                    return (int64_t)sys_nodebit_update(
+                        (syscall_nodebit_update_t *)arg1);
+                case SYS_NODEBIT_STATS:
+                    return (int64_t)sys_nodebit_stats(
+                        (syscall_nodebit_stats_t *)arg1);
+                case SYS_SLM_PLAN_OBSERVE:
+                    return (int64_t)sys_slm_plan_observe(
+                        (slm_plan_observation_t *)arg1);
+                default:
+                    break;
+            }
+            break;
+
+        default:
+            syscall_stats.invalid_calls++;
+            return (int64_t)AIOS_ERR_NOSYS;
+    }
+
+    syscall_stats.invalid_calls++;
+    return (int64_t)AIOS_ERR_NOSYS;
+}
+
+static aios_status_t sys_tensor_create(tensor_shape_t *shape,
+                                       mem_region_type_t region,
+                                       tensor_alloc_t *out) {
+    tensor_shape_t local_shape;
+    tensor_alloc_t allocation;
+    aios_status_t status = copy_from_user(&local_shape, shape, sizeof(local_shape));
+
+    if (status != AIOS_OK) {
+        return status;
+    }
+
+    status = syscall_output_buffer_status(out, sizeof(*out));
+    if (status != AIOS_OK) {
+        return status;
+    }
+
+    status = tensor_alloc(&local_shape, region, &allocation);
+    if (status != AIOS_OK) {
+        return status;
+    }
+
+    return copy_to_user(out, &allocation, sizeof(allocation));
+}
+
+/* ============================================================
+ * Model Management Implementation
+ * ============================================================ */
+
+aios_status_t sys_model_load(syscall_model_load_t *req) {
+    syscall_model_load_t local_req;
+    char model_path[sizeof(model_registry[0].name)];
+    model_id_t model_id = 0;
+    tensor_alloc_t alloc;
+    aios_status_t status = copy_from_user(&local_req, req, sizeof(local_req));
+    model_info_t *model = NULL;
+    model_info_t snapshot;
+
+    if (status != AIOS_OK) {
+        return status;
+    }
+    if (!local_req.path || !local_req.model_id_out) return AIOS_ERR_INVAL;
+
+    status = syscall_output_buffer_status(local_req.model_id_out,
+        sizeof(*local_req.model_id_out));
+    if (status != AIOS_OK) {
+        return status;
+    }
+
+    status = copy_string_from_user(model_path, local_req.path, sizeof(model_path));
+    if (status != AIOS_OK) {
+        return status;
+    }
+
+    spinlock_lock(&model_registry_lock);
+    if (model_count >= MAX_MODELS_REGISTRY) {
+        spinlock_unlock(&model_registry_lock);
+        return AIOS_ERR_NOMEM;
+    }
+    model_id = next_model_id++;
+    spinlock_unlock(&model_registry_lock);
+
+    /* Allocate memory for model weights before publishing the registry entry. */
+    status = model_alloc(model_id, MB(64), &alloc);
+    if (status != AIOS_OK) {
+        return status;
+    }
+
+    spinlock_lock(&model_registry_lock);
+    if (model_count >= MAX_MODELS_REGISTRY) {
+        spinlock_unlock(&model_registry_lock);
+        (void)model_free(model_id);
+        return AIOS_ERR_NOMEM;
+    }
+
+    model = &model_registry[model_count];
+    model->id = model_id;
+    copy_str(model->name, model_path, sizeof(model->name));
+    copy_str(model->arch, "transformer", 32); /* Default architecture */
+    model->param_count = 0;
+    model->memory_usage = alloc.size;
+    model->dtype = local_req.dtype;
+    model->accel_id = local_req.target_accel;
+    model->loaded = true;
+    model->inference_count = 0;
+    model->avg_latency_ns = 0;
+    snapshot = *model;
+    model_count++;
+    spinlock_unlock(&model_registry_lock);
+
+    status = copy_to_user(local_req.model_id_out, &snapshot.id, sizeof(snapshot.id));
+    if (status != AIOS_OK) {
+        return status;
+    }
+
+    kprintf("[SYSCALL] Model loaded: '%s' (ID=%u, mem=%u MB)\n",
+        snapshot.name, (uint64_t)snapshot.id,
+        snapshot.memory_usage / MB(1));
+
+    return AIOS_OK;
+}
+
+aios_status_t sys_model_unload(model_id_t id) {
+    model_info_t snapshot;
+    model_info_t *model = NULL;
+    aios_status_t status;
+
+    spinlock_lock(&model_registry_lock);
+    model = find_model_locked(id);
+    if (!model || !model->loaded) {
+        spinlock_unlock(&model_registry_lock);
+        return AIOS_ERR_INVAL;
+    }
+    snapshot = *model;
+    model->loaded = false;
+    model->memory_usage = 0;
+    spinlock_unlock(&model_registry_lock);
+
+    status = model_free(id);
+    if (status != AIOS_OK) {
+        spinlock_lock(&model_registry_lock);
+        model = find_model_locked(id);
+        if (model && model->id == snapshot.id) {
+            model->loaded = snapshot.loaded;
+            model->memory_usage = snapshot.memory_usage;
+        }
+        spinlock_unlock(&model_registry_lock);
+        return status;
+    }
+
+    kprintf("[SYSCALL] Model unloaded: '%s' (ID=%u)\n",
+        snapshot.name, (uint64_t)snapshot.id);
+
+    return AIOS_OK;
+}
+
+aios_status_t sys_model_info(model_id_t id, model_info_t *info) {
+    model_info_t *model = NULL;
+    model_info_t snapshot;
+    aios_status_t status = syscall_output_buffer_status(info, sizeof(*info));
+
+    if (status != AIOS_OK) {
+        return status;
+    }
+
+    spinlock_lock(&model_registry_lock);
+    model = find_model_locked(id);
+    if (!model) {
+        spinlock_unlock(&model_registry_lock);
+        return AIOS_ERR_INVAL;
+    }
+
+    snapshot = *model;
+    spinlock_unlock(&model_registry_lock);
+    return copy_to_user(info, &snapshot, sizeof(snapshot));
+}
+
+/* ============================================================
+ * Inference Implementation
+ * ============================================================ */
+
+aios_status_t sys_infer_submit(syscall_infer_t *req) {
+    syscall_infer_t local_req;
+    model_info_t model_snapshot;
+    model_info_t *model = NULL;
+    aios_status_t status = copy_from_user(&local_req, req, sizeof(local_req));
+
+    if (status != AIOS_OK) return status;
+
+    spinlock_lock(&model_registry_lock);
+    model = find_model_locked(local_req.model_id);
+    if (!model || !model->loaded) {
+        spinlock_unlock(&model_registry_lock);
+        return AIOS_ERR_INVAL;
+    }
+    model_snapshot = *model;
+    spinlock_unlock(&model_registry_lock);
+
+    /* Create an AI task for this inference */
+    sched_params_t params;
+    ai_sched_default_params(SCHED_POLICY_INFERENCE, &params);
+    params.affinity.preferred_accel = model_snapshot.accel_id;
+
+    ai_task_t *task;
+    status = ai_task_create("inference",
+        WORKLOAD_INFERENCE, &params, &task);
+    if (status != AIOS_OK) return status;
+
+    task->model_id = local_req.model_id;
+
+    /* Submit task to scheduler */
+    status = ai_task_submit(task->id);
+    if (status != AIOS_OK) return status;
+
+    spinlock_lock(&model_registry_lock);
+    model = find_model_locked(local_req.model_id);
+    if (model && model->loaded) {
+        model->inference_count++;
+    }
+    spinlock_unlock(&model_registry_lock);
+
+    kprintf("[SYSCALL] Inference submitted: model=%u task=%u\n",
+        (uint64_t)local_req.model_id, (uint64_t)task->id);
+
+    return AIOS_OK;
+}
+
+aios_status_t sys_infer_wait(task_id_t task_id) {
+    /* In a full implementation, this would block until task completes */
+    kprintf("[SYSCALL] Waiting for inference task %u\n", (uint64_t)task_id);
+    return AIOS_OK;
+}
+
+aios_status_t sys_infer_cancel(task_id_t task_id) {
+    return ai_task_destroy(task_id);
+}
+
+aios_status_t sys_infer_ring_setup(syscall_infer_ring_setup_t *req) {
+    syscall_infer_ring_setup_t local_req;
+    infer_ring_state_t *ring;
+    ai_ring_registration_t registration;
+    uint32_t ring_id = 0;
+    aios_status_t status = copy_from_user(&local_req, req, sizeof(local_req));
+
+    if (status != AIOS_OK) return status;
+    if (!local_req.ring_id_out) return AIOS_ERR_INVAL;
+    status = syscall_output_buffer_status(local_req.ring_id_out,
+        sizeof(*local_req.ring_id_out));
+    if (status != AIOS_OK) return status;
+    if (local_req.registration.abi_version != AI_RING_ABI_VERSION) return AIOS_ERR_INVAL;
+    if (!ai_ring_valid_entries(local_req.registration.submit_entries)) return AIOS_ERR_INVAL;
+    if (!ai_ring_valid_entries(local_req.registration.completion_entries)) return AIOS_ERR_INVAL;
+    spinlock_lock(&infer_ring_lock);
+    if (infer_ring_count >= AI_INFER_RING_CAPACITY) {
+        spinlock_unlock(&infer_ring_lock);
+        return AIOS_ERR_NOMEM;
+    }
+
+    ring = &infer_ring_table[infer_ring_count];
+    ring->registered = true;
+    ring->ring_id = infer_ring_count + 1;
+    ring->notify_count = 0;
+    ring->last_submit_tail = 0;
+    ring->last_notify_ns = 0;
+    ring->registration = local_req.registration;
+    ring_id = ring->ring_id;
+    registration = ring->registration;
+    infer_ring_count++;
+    spinlock_unlock(&infer_ring_lock);
+
+    status = copy_to_user(local_req.ring_id_out, &ring_id, sizeof(ring_id));
+    if (status != AIOS_OK) {
+        return status;
+    }
+
+    kprintf("[SYSCALL] Inference ring registered: id=%u sq=%u cq=%u flags=%u\n",
+        (uint64_t)ring_id,
+        (uint64_t)registration.submit_entries,
+        (uint64_t)registration.completion_entries,
+        (uint64_t)registration.flags);
+
+    return AIOS_OK;
+}
+
+aios_status_t sys_infer_ring_notify(syscall_infer_ring_notify_t *req) {
+    syscall_infer_ring_notify_t local_req;
+    infer_ring_state_t *ring;
+    aios_status_t status = copy_from_user(&local_req, req, sizeof(local_req));
+
+    if (status != AIOS_OK) return status;
+
+    spinlock_lock(&infer_ring_lock);
+    ring = find_infer_ring_locked(local_req.ring_id);
+    if (!ring) {
+        spinlock_unlock(&infer_ring_lock);
+        return AIOS_ERR_INVAL;
+    }
+
+    ring->notify_count++;
+    ring->last_submit_tail = local_req.submit_tail;
+    ring->last_notify_ns = kernel_time_monotonic_ns();
+    spinlock_unlock(&infer_ring_lock);
+
+    kprintf("[SYSCALL] Inference ring notify: id=%u tail=%u flags=%u\n",
+        (uint64_t)local_req.ring_id,
+        (uint64_t)local_req.submit_tail,
+        (uint64_t)local_req.flags);
+
+    return AIOS_OK;
+}
+
+aios_status_t sys_infer_ring_wait_cq(syscall_infer_ring_wait_t *req) {
+    syscall_infer_ring_wait_t local_req;
+    aios_status_t status = copy_from_user(&local_req, req, sizeof(local_req));
+
+    if (status != AIOS_OK) return status;
+    spinlock_lock(&infer_ring_lock);
+    bool registered = (find_infer_ring_locked(local_req.ring_id) != NULL);
+    spinlock_unlock(&infer_ring_lock);
+    if (!registered) return AIOS_ERR_INVAL;
+
+    kprintf("[SYSCALL] Inference ring wait pending implementation: id=%u timeout=%u ns\n",
+        (uint64_t)local_req.ring_id,
+        local_req.timeout_ns);
+
+    return AIOS_ERR_NOSYS;
+}
+
+aios_status_t sys_infer_ring_status(uint32_t ring_id, syscall_infer_ring_status_t *out) {
+    infer_ring_state_t *ring;
+    syscall_infer_ring_status_t snapshot;
+    aios_status_t status = syscall_output_buffer_status(out, sizeof(*out));
+
+    if (status != AIOS_OK) return status;
+
+    spinlock_lock(&infer_ring_lock);
+    ring = find_infer_ring_locked(ring_id);
+    if (!ring) {
+        spinlock_unlock(&infer_ring_lock);
+        return AIOS_ERR_INVAL;
+    }
+
+    snapshot.ring_id = ring->ring_id;
+    snapshot.registered = ring->registered;
+    snapshot.notify_count = ring->notify_count;
+    snapshot.registration = ring->registration;
+    spinlock_unlock(&infer_ring_lock);
+
+    return copy_to_user(out, &snapshot, sizeof(snapshot));
+}
+
+void ai_infer_ring_runtime(ai_ring_runtime_snapshot_t *out) {
+    uint32_t total_notifies = 0;
+    uint32_t max_submit_tail = 0;
+    uint16_t active = 0;
+    uint16_t last_ring_id = 0;
+    uint64_t last_notify_ns = 0;
+    bool any_event = false;
+    bool any_shared_kv = false;
+
+    if (!out) {
+        return;
+    }
+
+    out->registered_rings = 0;
+    out->active_rings = 0;
+    out->total_notifies = 0;
+    out->max_submit_tail_observed = 0;
+    out->last_ring_id = 0;
+    out->last_notify_ns = 0;
+    out->any_event_notify = false;
+    out->any_shared_kv = false;
+
+    spinlock_lock(&infer_ring_lock);
+    for (uint32_t i = 0; i < infer_ring_count; i++) {
+        infer_ring_state_t *ring = &infer_ring_table[i];
+        if (!ring->registered) {
+            continue;
+        }
+
+        out->registered_rings++;
+        total_notifies += ring->notify_count;
+        if (ring->notify_count > 0) {
+            active++;
+        }
+        if (ring->last_submit_tail > max_submit_tail) {
+            max_submit_tail = ring->last_submit_tail;
+        }
+        if (ring->last_notify_ns >= last_notify_ns) {
+            last_notify_ns = ring->last_notify_ns;
+            last_ring_id = (uint16_t)ring->ring_id;
+        }
+        if ((ring->registration.flags & AI_RING_REG_F_EVENT_NOTIFY) != 0) {
+            any_event = true;
+        }
+        if ((ring->registration.flags & AI_RING_REG_F_SHARED_KV) != 0) {
+            any_shared_kv = true;
+        }
+    }
+    spinlock_unlock(&infer_ring_lock);
+
+    out->active_rings = active;
+    out->total_notifies = total_notifies;
+    out->max_submit_tail_observed = max_submit_tail;
+    out->last_ring_id = last_ring_id;
+    out->last_notify_ns = last_notify_ns;
+    out->any_event_notify = any_event;
+    out->any_shared_kv = any_shared_kv;
+}
+
+/* ============================================================
+ * Training Implementation
+ * ============================================================ */
+
+aios_status_t sys_train_forward(syscall_train_t *req) {
+    syscall_train_t local_req;
+    model_info_t *model = NULL;
+    bool loaded = false;
+    aios_status_t status = copy_from_user(&local_req, req, sizeof(local_req));
+
+    if (status != AIOS_OK) return status;
+
+    spinlock_lock(&model_registry_lock);
+    model = find_model_locked(local_req.model_id);
+    loaded = model && model->loaded;
+    spinlock_unlock(&model_registry_lock);
+    if (!loaded) return AIOS_ERR_INVAL;
+
+    /* Create training task */
+    sched_params_t params;
+    ai_sched_default_params(SCHED_POLICY_TRAINING, &params);
+    params.batch_size = local_req.batch_size;
+
+    ai_task_t *task;
+    status = ai_task_create("train_forward",
+        WORKLOAD_TRAINING, &params, &task);
+    if (status != AIOS_OK) return status;
+
+    task->model_id = local_req.model_id;
+    status = ai_task_submit(task->id);
+
+    kprintf("[SYSCALL] Training forward pass: model=%u batch=%u\n",
+        (uint64_t)local_req.model_id, (uint64_t)local_req.batch_size);
+
+    return status;
+}
+
+aios_status_t sys_train_backward(model_id_t model_id) {
+    model_info_t *model = NULL;
+    bool loaded = false;
+
+    spinlock_lock(&model_registry_lock);
+    model = find_model_locked(model_id);
+    loaded = model && model->loaded;
+    spinlock_unlock(&model_registry_lock);
+    if (!loaded) return AIOS_ERR_INVAL;
+
+    sched_params_t params;
+    ai_sched_default_params(SCHED_POLICY_TRAINING, &params);
+
+    ai_task_t *task;
+    aios_status_t status = ai_task_create("train_backward",
+        WORKLOAD_TRAINING, &params, &task);
+    if (status != AIOS_OK) return status;
+
+    task->model_id = model_id;
+    status = ai_task_submit(task->id);
+
+    kprintf("[SYSCALL] Training backward pass: model=%u\n",
+        (uint64_t)model_id);
+
+    return status;
+}
+
+aios_status_t sys_train_step(model_id_t model_id, float learning_rate) {
+    (void)learning_rate;
+    kprintf("[SYSCALL] Optimizer step: model=%u lr=...\n",
+        (uint64_t)model_id);
+    return AIOS_OK;
+}
+
+/* ============================================================
+ * Autonomy Control
+ * ============================================================ */
+
+aios_status_t sys_autonomy_action_propose(autonomy_action_req_t *req) {
+    autonomy_action_req_t local_req;
+    aios_status_t status = copy_from_user(&local_req, req, sizeof(local_req));
+
+    if (status != AIOS_OK) return status;
+    return autonomy_action_propose_req(&local_req);
+}
+
+aios_status_t sys_autonomy_action_commit(policy_eval_t *eval) {
+    policy_eval_t local_eval;
+    aios_status_t status = syscall_optional_output_buffer_status(eval, sizeof(*eval));
+
+    if (status != AIOS_OK) return status;
+    status = autonomy_action_commit_next(eval ? &local_eval : NULL);
+    if (status != AIOS_OK || !eval) {
+        return status;
+    }
+
+    return copy_to_user(eval, &local_eval, sizeof(local_eval));
+}
+
+aios_status_t sys_autonomy_rollback_last(void) {
+    return autonomy_action_rollback_last();
+}
+
+aios_status_t sys_autonomy_stats(autonomy_stats_t *out) {
+    autonomy_stats_t stats;
+    aios_status_t status = syscall_output_buffer_status(out, sizeof(*out));
+
+    if (status != AIOS_OK) return status;
+    autonomy_stats(&stats);
+    return copy_to_user(out, &stats, sizeof(stats));
+}
+
+aios_status_t sys_autonomy_mode_set(syscall_autonomy_mode_t *mode) {
+    syscall_autonomy_mode_t local_mode;
+    aios_status_t status = copy_from_user(&local_mode, mode, sizeof(local_mode));
+
+    if (status != AIOS_OK) return status;
+    autonomy_set_safe_mode(local_mode.safe_mode);
+    autonomy_set_observation_only(local_mode.observation_only);
+    return AIOS_OK;
+}
+
+aios_status_t sys_autonomy_telemetry_last(telemetry_frame_t *out) {
+    telemetry_frame_t frame;
+    aios_status_t status = syscall_output_buffer_status(out, sizeof(*out));
+
+    if (status != AIOS_OK) return status;
+    status = autonomy_get_latest_telemetry(&frame);
+    if (status != AIOS_OK) {
+        return status;
+    }
+
+    return copy_to_user(out, &frame, sizeof(frame));
+}
+
+aios_status_t sys_slm_hw_snapshot(slm_hw_snapshot_t *out) {
+    slm_hw_snapshot_t snapshot;
+    aios_status_t status = syscall_output_buffer_status(out, sizeof(*out));
+
+    if (status != AIOS_OK) return status;
+    status = slm_snapshot_read(&snapshot);
+    if (status != AIOS_OK) {
+        return status;
+    }
+
+    return copy_to_user(out, &snapshot, sizeof(snapshot));
+}
+
+aios_status_t sys_slm_plan_submit(slm_plan_request_t *req, uint32_t *plan_id_out) {
+    slm_plan_request_t local_req;
+    uint32_t plan_id = 0;
+    aios_status_t status = copy_from_user(&local_req, req, sizeof(local_req));
+
+    if (status != AIOS_OK) return status;
+    status = syscall_optional_output_buffer_status(plan_id_out, sizeof(*plan_id_out));
+    if (status != AIOS_OK) return status;
+
+    status = slm_plan_submit(&local_req, &plan_id);
+    if (plan_id_out && plan_id != 0) {
+        aios_status_t copy_status = copy_to_user(plan_id_out, &plan_id, sizeof(plan_id));
+        if (copy_status != AIOS_OK) {
+            return copy_status;
+        }
+    }
+
+    return status;
+}
+
+aios_status_t sys_slm_plan_apply(uint32_t plan_id) {
+    return slm_plan_apply(plan_id);
+}
+
+aios_status_t sys_slm_plan_status(uint32_t plan_id, slm_plan_t *out) {
+    slm_plan_t plan;
+    aios_status_t status = syscall_output_buffer_status(out, sizeof(*out));
+
+    if (status != AIOS_OK) return status;
+    status = slm_plan_get(plan_id, &plan);
+    if (status != AIOS_OK) {
+        return status;
+    }
+
+    return copy_to_user(out, &plan, sizeof(plan));
+}
+
+aios_status_t sys_slm_plan_list(slm_plan_list_t *out) {
+    slm_plan_list_t plans;
+    aios_status_t status = syscall_output_buffer_status(out, sizeof(*out));
+
+    if (status != AIOS_OK) return status;
+    status = slm_plan_list(&plans);
+    if (status != AIOS_OK) {
+        return status;
+    }
+
+    return copy_to_user(out, &plans, sizeof(plans));
+}
+
+aios_status_t sys_slm_nodebit_lookup(uint16_t node_id, slm_nodebit_t *out) {
+    slm_nodebit_t node;
+    aios_status_t status = syscall_output_buffer_status(out, sizeof(*out));
+
+    if (status != AIOS_OK) return status;
+    status = slm_nodebit_lookup(node_id, &node);
+    if (status != AIOS_OK) {
+        return status;
+    }
+
+    return copy_to_user(out, &node, sizeof(node));
+}
+
+aios_status_t sys_nodebit_register(syscall_nodebit_register_t *req) {
+    syscall_nodebit_register_t local_req;
+    aios_status_t status = copy_from_user(&local_req, req, sizeof(local_req));
+
+    if (status != AIOS_OK) return status;
+    return nodebit_register(local_req.node_id, local_req.label,
+                            local_req.caps_allowed, local_req.health_gate);
+}
+
+aios_status_t sys_nodebit_update(syscall_nodebit_update_t *req) {
+    syscall_nodebit_update_t local_req;
+    aios_status_t status = copy_from_user(&local_req, req, sizeof(local_req));
+
+    if (status != AIOS_OK) return status;
+    return nodebit_update_caps(local_req.node_id, local_req.caps_allowed);
+}
+
+aios_status_t sys_nodebit_stats(syscall_nodebit_stats_t *req) {
+    syscall_nodebit_stats_t local_req;
+    nodebit_node_stats_t stats;
+    aios_status_t status = copy_from_user(&local_req, req, sizeof(local_req));
+
+    if (status != AIOS_OK) return status;
+
+    status = nodebit_stats_lookup(local_req.node_id, &stats);
+    if (status != AIOS_OK) return status;
+    return copy_to_user(local_req.stats_out, &stats, sizeof(stats));
+}
+
+aios_status_t sys_pipe_create(syscall_pipe_create_t *req) {
+    syscall_pipe_create_t local_req;
+    uint32_t pipeline_id = 0;
+    aios_status_t status = copy_from_user(&local_req, req, sizeof(local_req));
+
+    if (status != AIOS_OK) return status;
+    local_req.label[NODE_PIPELINE_LABEL_MAX - 1] = '\0';
+
+    status = node_pipeline_create(local_req.node_id, local_req.label,
+                                  &pipeline_id);
+    if (status != AIOS_OK) return status;
+    return copy_to_user(local_req.pipeline_id_out, &pipeline_id,
+                        sizeof(pipeline_id));
+}
+
+aios_status_t sys_pipe_add_stage(syscall_pipe_add_stage_t *req) {
+    syscall_pipe_add_stage_t local_req;
+    aios_status_t status = copy_from_user(&local_req, req, sizeof(local_req));
+
+    if (status != AIOS_OK) return status;
+    return node_pipeline_add_stage(local_req.node_id, local_req.pipeline_id,
+                                   &local_req.stage);
+}
+
+aios_status_t sys_pipe_execute(syscall_pipe_execute_t *req) {
+    syscall_pipe_execute_t local_req;
+    node_pipeline_exec_result_t result = {0};
+    aios_status_t status = copy_from_user(&local_req, req, sizeof(local_req));
+
+    if (status != AIOS_OK) return status;
+
+    status = node_pipeline_execute(local_req.node_id, local_req.pipeline_id,
+                                   &result);
+
+    /* Result carries per-run detail even for a failed stage walk. */
+    if (local_req.result_out) {
+        aios_status_t copy_status = copy_to_user(local_req.result_out,
+                                                 &result, sizeof(result));
+        if (status == AIOS_OK && copy_status != AIOS_OK) {
+            status = copy_status;
+        }
+    }
+    return status;
+}
+
+aios_status_t sys_pipe_destroy(syscall_pipe_destroy_t *req) {
+    syscall_pipe_destroy_t local_req;
+    aios_status_t status = copy_from_user(&local_req, req, sizeof(local_req));
+
+    if (status != AIOS_OK) return status;
+    return node_pipeline_destroy(local_req.node_id, local_req.pipeline_id);
+}
+
+aios_status_t sys_pipe_stats(node_pipeline_snapshot_t *out) {
+    node_pipeline_snapshot_t snapshot;
+    aios_status_t status = syscall_output_buffer_status(out, sizeof(*out));
+
+    if (status != AIOS_OK) return status;
+    node_pipeline_get_snapshot(&snapshot);
+    return copy_to_user(out, &snapshot, sizeof(snapshot));
+}
+
+aios_status_t sys_slm_plan_observe(slm_plan_observation_t *out) {
+    slm_plan_observation_t observation;
+    aios_status_t status = syscall_output_buffer_status(out, sizeof(*out));
+
+    if (status != AIOS_OK) return status;
+    slm_plan_observation_read(&observation);
+    return copy_to_user(out, &observation, sizeof(observation));
+}
+
+/* ============================================================
+ * System Info
+ * ============================================================ */
+
+void sys_info_dump(void) {
+    model_info_t model_snapshot[MAX_MODELS_REGISTRY];
+    uint32_t model_snapshot_count = 0;
+    uint32_t registered_rings = 0;
+    aios_bootstrap_info_t bootstrap = {0};
+
+    model_snapshot_count = model_registry_snapshot(model_snapshot, MAX_MODELS_REGISTRY);
+    spinlock_lock(&infer_ring_lock);
+    registered_rings = infer_ring_count;
+    spinlock_unlock(&infer_ring_lock);
+
+    kprintf("\n=== AIOS System Information ===\n");
+    kprintf("Syscall Statistics:\n");
+    kprintf("  Total calls:    %u\n", syscall_stats.total_calls);
+    kprintf("  Model calls:    %u\n", syscall_stats.model_calls);
+    kprintf("  Tensor calls:   %u\n", syscall_stats.tensor_calls);
+    kprintf("  Inference calls: %u\n", syscall_stats.infer_calls);
+    kprintf("  Training calls: %u\n", syscall_stats.train_calls);
+    kprintf("  Accel calls:    %u\n", syscall_stats.accel_calls);
+    kprintf("  Pipeline calls: %u\n", syscall_stats.pipe_calls);
+    kprintf("  Info calls:     %u\n", syscall_stats.info_calls);
+    kprintf("  Invalid calls:  %u\n", syscall_stats.invalid_calls);
+    kprintf("  Registered rings: %u\n", (uint64_t)registered_rings);
+    {
+        ai_ring_runtime_snapshot_t ring_runtime;
+        ai_infer_ring_runtime(&ring_runtime);
+        kprintf("  Ring runtime: registered=%u active=%u notify=%u max_tail=%u last_ring=%u event=%u shared_kv=%u\n",
+            (uint64_t)ring_runtime.registered_rings,
+            (uint64_t)ring_runtime.active_rings,
+            (uint64_t)ring_runtime.total_notifies,
+            (uint64_t)ring_runtime.max_submit_tail_observed,
+            (uint64_t)ring_runtime.last_ring_id,
+            (uint64_t)ring_runtime.any_event_notify,
+            (uint64_t)ring_runtime.any_shared_kv);
+    }
+    if (sys_info_bootstrap(&bootstrap) == AIOS_OK) {
+        kprintf("  Bootstrap ABI: v%u size=%u features=%x user_ready=%u room=%s plans=%u\n",
+            (uint64_t)bootstrap.abi_version,
+            (uint64_t)bootstrap.struct_size,
+            (uint64_t)bootstrap.features,
+            (uint64_t)bootstrap.user_mode.ready,
+            (uint64_t)(uintptr_t)kernel_stability_name(bootstrap.health.level),
+            (uint64_t)bootstrap.room.slm_plan_count);
+    }
+
+    kprintf("\nLoaded Models: %u\n", (uint64_t)model_snapshot_count);
+    for (uint32_t i = 0; i < model_snapshot_count; i++) {
+        if (model_snapshot[i].loaded) {
+            kprintf("  [%u] %s (%s) - %u MB, %u inferences\n",
+                (uint64_t)model_snapshot[i].id,
+                model_snapshot[i].name,
+                model_snapshot[i].arch,
+                model_snapshot[i].memory_usage / MB(1),
+                model_snapshot[i].inference_count);
+        }
+    }
+    kprintf("================================\n");
+
+    /* Also dump subsystem info */
+    kernel_room_dump();
+    tensor_mm_dump();
+    memory_fabric_dump();
+    ai_sched_dump();
+    accel_hal_dump();
+    acpi_dump();
+    pci_core_dump();
+    kernel_health_dump();
+    autonomy_dump();
+    slm_orchestrator_dump();
+}
+
+aios_status_t sys_info_health(kernel_health_summary_t *out) {
+    kernel_health_summary_t summary;
+    aios_status_t status = syscall_output_buffer_status(out, sizeof(*out));
+
+    if (status != AIOS_OK) {
+        return status;
+    }
+
+    kernel_health_get_summary(&summary);
+    return copy_to_user(out, &summary, sizeof(summary));
+}
+
+aios_status_t sys_info_room(kernel_room_snapshot_t *out) {
+    kernel_room_snapshot_t snapshot;
+    aios_status_t status = syscall_output_buffer_status(out, sizeof(*out));
+
+    if (status != AIOS_OK) {
+        return status;
+    }
+
+    status = kernel_room_snapshot_read(&snapshot);
+    if (status != AIOS_OK) {
+        return status;
+    }
+
+    return copy_to_user(out, &snapshot, sizeof(snapshot));
+}
+
+aios_status_t sys_info_bootstrap(aios_bootstrap_info_t *out) {
+    aios_bootstrap_info_t info;
+    aios_status_t status = AIOS_OK;
+
+    status = syscall_output_buffer_status(out, sizeof(*out));
+    if (status != AIOS_OK) {
+        return status;
+    }
+
+    memset(&info, 0, sizeof(info));
+    info.abi_version = AIOS_BOOTSTRAP_INFO_ABI_VERSION;
+    info.struct_size = (uint32_t)sizeof(info);
+    info.features = AIOS_BOOTSTRAP_FEATURE_ROOM |
+                    AIOS_BOOTSTRAP_FEATURE_USER_MODE |
+                    AIOS_BOOTSTRAP_FEATURE_SLM;
+
+    kernel_health_get_summary(&info.health);
+
+    status = kernel_room_snapshot_read(&info.room);
+    if (status != AIOS_OK) {
+        return status;
+    }
+
+    status = user_mode_scaffold_info(&info.user_mode);
+    if (status != AIOS_OK) {
+        return status;
+    }
+
+    status = slm_snapshot_read(&info.slm);
+    if (status != AIOS_OK) {
+        info.features &= ~AIOS_BOOTSTRAP_FEATURE_SLM;
+        memset(&info.slm, 0, sizeof(info.slm));
+        info.slm.abi_version = SLM_HW_SNAPSHOT_ABI_VERSION;
+        info.slm.struct_size = (uint32_t)sizeof(info.slm);
+        info.slm.runtime_state = SLM_RUNTIME_ABSENT;
+        info.slm.runtime_status = status;
+    }
+
+    return copy_to_user(out, &info, sizeof(info));
+}
+
+aios_status_t sys_info_resource(ai_resource_snapshot_request_t *req) {
+    ai_resource_snapshot_request_t local_req;
+    ai_resource_snapshot_t snapshot;
+    ai_resource_snapshot_t *out;
+    aios_status_t status = copy_from_user(
+        &local_req, req, sizeof(local_req)
+    );
+
+    if (status != AIOS_OK) {
+        return status;
+    }
+    if (local_req.schema_version != AI_RESOURCE_SCHEMA_VERSION ||
+        local_req.output_size != (uint32_t)sizeof(snapshot) ||
+        local_req.output_addr == 0U) {
+        return AIOS_ERR_INVAL;
+    }
+
+    out = (ai_resource_snapshot_t *)(uintptr_t)local_req.output_addr;
+    status = syscall_output_buffer_status(out, local_req.output_size);
+    if (status != AIOS_OK) {
+        return status;
+    }
+
+    status = ai_resource_read(&snapshot);
+    if (status != AIOS_OK) {
+        return status;
+    }
+    if (!ai_resource_snapshot_valid(&snapshot)) {
+        return AIOS_ERR_IO;
+    }
+
+    return copy_to_user(out, &snapshot, sizeof(snapshot));
+}
+
+static aios_status_t sys_info_memory(mem_stats_t *out) {
+    mem_stats_t stats;
+    aios_status_t status = syscall_output_buffer_status(out, sizeof(*out));
+
+    if (status != AIOS_OK) {
+        return status;
+    }
+
+    tensor_mm_stats(&stats);
+    return copy_to_user(out, &stats, sizeof(stats));
+}
+
+static aios_status_t sys_info_scheduler(sched_stats_t *out) {
+    sched_stats_t stats;
+    aios_status_t status = syscall_output_buffer_status(out, sizeof(*out));
+
+    if (status != AIOS_OK) {
+        return status;
+    }
+
+    ai_sched_stats(&stats);
+    return copy_to_user(out, &stats, sizeof(stats));
+}
+
+static aios_status_t ai_syscall_contract_selftest(void) {
+    slm_nodebit_t nodebit = {0};
+    ai_resource_snapshot_t resource_snapshot = {0};
+    ai_resource_snapshot_request_t resource_req = {
+        .schema_version = AI_RESOURCE_SCHEMA_VERSION,
+        .output_size = (uint32_t)sizeof(resource_snapshot),
+        .output_addr = (uint64_t)(uintptr_t)&resource_snapshot,
+    };
+
+    if (sys_tensor_create(NULL, MEM_REGION_TENSOR, NULL) != AIOS_ERR_INVAL) {
+        return AIOS_ERR_IO;
+    }
+    if (sys_model_load(NULL) != AIOS_ERR_INVAL) {
+        return AIOS_ERR_IO;
+    }
+    if (sys_model_info(0, NULL) != AIOS_ERR_INVAL) {
+        return AIOS_ERR_IO;
+    }
+    if (sys_infer_submit(NULL) != AIOS_ERR_INVAL) {
+        return AIOS_ERR_IO;
+    }
+    if (sys_infer_ring_setup(NULL) != AIOS_ERR_INVAL) {
+        return AIOS_ERR_IO;
+    }
+    if (sys_infer_ring_notify(NULL) != AIOS_ERR_INVAL) {
+        return AIOS_ERR_IO;
+    }
+    if (sys_infer_ring_wait_cq(NULL) != AIOS_ERR_INVAL) {
+        return AIOS_ERR_IO;
+    }
+    if (sys_infer_ring_status(0, NULL) != AIOS_ERR_INVAL) {
+        return AIOS_ERR_IO;
+    }
+    if (sys_train_forward(NULL) != AIOS_ERR_INVAL) {
+        return AIOS_ERR_IO;
+    }
+    if (sys_autonomy_action_propose(NULL) != AIOS_ERR_INVAL) {
+        return AIOS_ERR_IO;
+    }
+    if (sys_autonomy_stats(NULL) != AIOS_ERR_INVAL) {
+        return AIOS_ERR_IO;
+    }
+    if (sys_autonomy_mode_set(NULL) != AIOS_ERR_INVAL) {
+        return AIOS_ERR_IO;
+    }
+    if (sys_autonomy_telemetry_last(NULL) != AIOS_ERR_INVAL) {
+        return AIOS_ERR_IO;
+    }
+    if (sys_slm_hw_snapshot(NULL) != AIOS_ERR_INVAL) {
+        return AIOS_ERR_IO;
+    }
+    if (sys_slm_plan_submit(NULL, NULL) != AIOS_ERR_INVAL) {
+        return AIOS_ERR_IO;
+    }
+    if (sys_slm_plan_status(0, NULL) != AIOS_ERR_INVAL) {
+        return AIOS_ERR_IO;
+    }
+    if (sys_slm_plan_list(NULL) != AIOS_ERR_INVAL) {
+        return AIOS_ERR_IO;
+    }
+    if (sys_slm_nodebit_lookup(SLM_NODEBIT_ID_API_BOOTSTRAP, NULL) !=
+        AIOS_ERR_INVAL) {
+        return AIOS_ERR_IO;
+    }
+    if (sys_slm_nodebit_lookup(SLM_NODEBIT_ID_COUNT, &nodebit) !=
+        AIOS_ERR_INVAL) {
+        return AIOS_ERR_IO;
+    }
+    if (sys_nodebit_register(NULL) != AIOS_ERR_INVAL) {
+        return AIOS_ERR_IO;
+    }
+    if (sys_nodebit_update(NULL) != AIOS_ERR_INVAL) {
+        return AIOS_ERR_IO;
+    }
+    if (sys_nodebit_stats(NULL) != AIOS_ERR_INVAL) {
+        return AIOS_ERR_IO;
+    }
+    if (sys_pipe_create(NULL) != AIOS_ERR_INVAL ||
+        sys_pipe_add_stage(NULL) != AIOS_ERR_INVAL ||
+        sys_pipe_execute(NULL) != AIOS_ERR_INVAL ||
+        sys_pipe_destroy(NULL) != AIOS_ERR_INVAL ||
+        sys_pipe_stats(NULL) != AIOS_ERR_INVAL ||
+        sys_slm_plan_observe(NULL) != AIOS_ERR_INVAL) {
+        return AIOS_ERR_IO;
+    }
+    if (sys_info_memory(NULL) != AIOS_ERR_INVAL) {
+        return AIOS_ERR_IO;
+    }
+    if (sys_info_scheduler(NULL) != AIOS_ERR_INVAL) {
+        return AIOS_ERR_IO;
+    }
+    if (sys_info_health(NULL) != AIOS_ERR_INVAL) {
+        return AIOS_ERR_IO;
+    }
+    if (sys_info_room(NULL) != AIOS_ERR_INVAL) {
+        return AIOS_ERR_IO;
+    }
+    if (sys_info_bootstrap(NULL) != AIOS_ERR_INVAL) {
+        return AIOS_ERR_IO;
+    }
+    if (sys_info_resource(NULL) != AIOS_ERR_INVAL) {
+        return AIOS_ERR_IO;
+    }
+    resource_req.output_addr = 0U;
+    if (sys_info_resource(&resource_req) != AIOS_ERR_INVAL) {
+        return AIOS_ERR_IO;
+    }
+    resource_req.output_addr = (uint64_t)(uintptr_t)&resource_snapshot;
+    resource_req.schema_version = AI_RESOURCE_SCHEMA_VERSION + 1U;
+    if (sys_info_resource(&resource_req) != AIOS_ERR_INVAL) {
+        return AIOS_ERR_IO;
+    }
+    resource_req.schema_version = AI_RESOURCE_SCHEMA_VERSION;
+    resource_req.output_size = (uint32_t)sizeof(resource_snapshot) + 1U;
+    if (sys_info_resource(&resource_req) != AIOS_ERR_INVAL) {
+        return AIOS_ERR_IO;
+    }
+    resource_req.output_size = (uint32_t)sizeof(resource_snapshot) - 1U;
+    if (sys_info_resource(&resource_req) != AIOS_ERR_INVAL) {
+        return AIOS_ERR_IO;
+    }
+    resource_req.output_size = (uint32_t)sizeof(resource_snapshot);
+    resource_req.output_addr = (uint64_t)((uintptr_t)~0ULL - 7ULL);
+    if (sys_info_resource(&resource_req) != AIOS_ERR_OVERFLOW) {
+        return AIOS_ERR_IO;
+    }
+    if (syscall_output_buffer_status((void *)((uintptr_t)~0ULL - 7ULL), 16) !=
+        AIOS_ERR_OVERFLOW) {
+        return AIOS_ERR_IO;
+    }
+
+    return AIOS_OK;
+}
+
+__asm__(".section .note.GNU-stack,\"\",@progbits\n\t.previous");

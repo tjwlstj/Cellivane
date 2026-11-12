@@ -1,0 +1,695 @@
+/*
+ * AIOS Kernel - Intel E1000 Minimal Driver
+ * AI-Native Operating System
+ */
+
+#include <drivers/e1000.h>
+#include <drivers/platform_probe.h>
+#include <drivers/pci_core.h>
+#include <drivers/vga.h>
+#include <drivers/serial.h>
+#include <lib/string.h>
+
+#define PCI_VENDOR_INTEL     0x8086
+
+#define E1000_DEV_82540EM    0x100E
+#define E1000_DEV_82545EM    0x100F
+#define E1000_DEV_82574L     0x10D3
+
+#define E1000_REG_CTRL       0x0000
+#define E1000_REG_STATUS     0x0008
+#define E1000_REG_EERD       0x0014
+#define E1000_REG_IMC        0x00D8
+#define E1000_REG_RCTL       0x0100
+#define E1000_REG_TCTL       0x0400
+#define E1000_REG_TIPG       0x0410
+#define E1000_REG_RDBAL      0x2800
+#define E1000_REG_RDBAH      0x2804
+#define E1000_REG_RDLEN      0x2808
+#define E1000_REG_RDH        0x2810
+#define E1000_REG_RDT        0x2818
+#define E1000_REG_TDBAL      0x3800
+#define E1000_REG_TDBAH      0x3804
+#define E1000_REG_TDLEN      0x3808
+#define E1000_REG_TDH        0x3810
+#define E1000_REG_TDT        0x3818
+#define E1000_REG_RAL        0x5400
+#define E1000_REG_RAH        0x5404
+
+#define E1000_STATUS_LINK_UP BIT(1)
+#define E1000_CTRL_SLU       BIT(6)
+#define E1000_CTRL_RST       BIT(26)
+#define E1000_EERD_START     BIT(0)
+#define E1000_EERD_DONE      BIT(4)
+#define E1000_RCTL_EN        BIT(1)
+#define E1000_RCTL_BAM       BIT(15)
+#define E1000_RCTL_SECRC     BIT(26)
+#define E1000_RX_STATUS_DD   BIT(0)
+#define E1000_RX_STATUS_EOP  BIT(1)
+#define E1000_TCTL_EN        BIT(1)
+#define E1000_TCTL_PSP       BIT(3)
+#define E1000_TX_CMD_EOP     BIT(0)
+#define E1000_TX_CMD_IFCS    BIT(1)
+#define E1000_TX_CMD_RS      BIT(3)
+#define E1000_TX_STATUS_DD   BIT(0)
+
+#define E1000_RX_RING_SIZE   8
+#define E1000_RX_BUF_SIZE    2048
+#define E1000_TX_RING_SIZE   8
+#define E1000_TX_BUF_SIZE    2048
+#define E1000_TEST_FRAME_LEN 60
+
+typedef struct {
+    uint64_t addr;
+    uint16_t length;
+    uint16_t checksum;
+    uint8_t status;
+    uint8_t errors;
+    uint16_t special;
+} PACKED e1000_rx_desc_t;
+
+typedef struct {
+    uint64_t addr;
+    uint16_t length;
+    uint8_t cso;
+    uint8_t cmd;
+    uint8_t status;
+    uint8_t css;
+    uint16_t special;
+} PACKED e1000_tx_desc_t;
+
+typedef struct {
+    bool present;
+    bool ready;
+    bool link_up;
+    bool has_eeprom;
+    bool rx_ready;
+    bool tx_ready;
+    uint8_t bus;
+    uint8_t slot;
+    uint8_t function;
+    uint16_t vendor_id;
+    uint16_t device_id;
+    uint16_t io_base;
+    uint64_t mmio_base;
+    uint8_t mac[6];
+    uint32_t status;
+    aios_status_t last_rx_status;
+    aios_status_t last_tx_status;
+    uint16_t last_rx_length;
+    uint32_t rx_poll_count;
+    uint32_t rx_frame_count;
+    uint32_t rx_drop_count;
+} e1000_device_t;
+
+static e1000_device_t g_e1000 = {0};
+static e1000_rx_desc_t g_rx_ring[E1000_RX_RING_SIZE] ALIGNED(16);
+static uint8_t g_rx_buffers[E1000_RX_RING_SIZE][E1000_RX_BUF_SIZE] ALIGNED(16);
+static e1000_tx_desc_t g_tx_ring[E1000_TX_RING_SIZE] ALIGNED(16);
+static uint8_t g_tx_buffers[E1000_TX_RING_SIZE][E1000_TX_BUF_SIZE] ALIGNED(16);
+static uint32_t g_rx_tail = 0;
+static uint32_t g_tx_tail = 0;
+
+static inline void outl(uint16_t port, uint32_t val) {
+    __asm__ volatile ("outl %0, %1" : : "a"(val), "Nd"(port));
+}
+
+static inline uint32_t inl(uint16_t port) {
+    uint32_t ret;
+    __asm__ volatile ("inl %1, %0" : "=a"(ret) : "Nd"(port));
+    return ret;
+}
+
+static inline void io_wait(void) {
+    __asm__ volatile ("outb %%al, $0x80" : : "a"(0));
+}
+
+static bool e1000_is_supported(uint16_t vendor_id, uint16_t device_id) {
+    if (vendor_id != PCI_VENDOR_INTEL) {
+        return false;
+    }
+
+    switch (device_id) {
+        case E1000_DEV_82540EM:
+        case E1000_DEV_82545EM:
+        case E1000_DEV_82574L:
+            return true;
+        default:
+            return false;
+    }
+}
+
+static int32_t e1000_candidate_score(const platform_device_t *dev) {
+    int32_t score = 0;
+
+    switch (dev->device_id) {
+        case E1000_DEV_82574L: score += 120; break;
+        case E1000_DEV_82545EM: score += 110; break;
+        case E1000_DEV_82540EM: score += 100; break;
+        default: score += 60; break;
+    }
+
+    score += (int32_t)dev->mmio_bar_count * 8;
+    score += (int32_t)dev->io_bar_count * 5;
+    score += (int32_t)dev->bar_count * 2;
+
+    if (dev->pcie_capable) {
+        score += 8;
+    }
+    if (dev->msix_capable) {
+        score += 4;
+    } else if (dev->msi_capable) {
+        score += 2;
+    }
+    if (dev->has_64bit_bar) {
+        score += 2;
+    }
+
+    if (dev->mmio_bar_count == 0 && dev->io_bar_count == 0) {
+        score -= 40;
+    }
+    if (dev->bar_count == 0) {
+        score -= 24;
+    }
+
+    return score;
+}
+
+static bool e1000_candidate_better(const platform_device_t *dev,
+                                   int32_t score,
+                                   const platform_device_t *best,
+                                   int32_t best_score) {
+    if (!best) {
+        return true;
+    }
+    if (score != best_score) {
+        return score > best_score;
+    }
+    if (dev->pcie_capable != best->pcie_capable) {
+        return dev->pcie_capable;
+    }
+    if (dev->mmio_bar_count != best->mmio_bar_count) {
+        return dev->mmio_bar_count > best->mmio_bar_count;
+    }
+    if (dev->io_bar_count != best->io_bar_count) {
+        return dev->io_bar_count > best->io_bar_count;
+    }
+    if (dev->bus != best->bus) {
+        return dev->bus < best->bus;
+    }
+    if (dev->slot != best->slot) {
+        return dev->slot < best->slot;
+    }
+    return dev->function < best->function;
+}
+
+static bool e1000_use_mmio(void) {
+    return g_e1000.mmio_base != 0;
+}
+
+static uint32_t e1000_read_reg(uint32_t reg) {
+    if (e1000_use_mmio()) {
+        volatile uint32_t *mmio = (volatile uint32_t *)(uintptr_t)(g_e1000.mmio_base + reg);
+        return *mmio;
+    }
+
+    outl((uint16_t)(g_e1000.io_base + 0), reg);
+    return inl((uint16_t)(g_e1000.io_base + 4));
+}
+
+static void e1000_write_reg(uint32_t reg, uint32_t value) {
+    if (e1000_use_mmio()) {
+        volatile uint32_t *mmio = (volatile uint32_t *)(uintptr_t)(g_e1000.mmio_base + reg);
+        *mmio = value;
+        (void)*mmio;
+        return;
+    }
+
+    outl((uint16_t)(g_e1000.io_base + 0), reg);
+    outl((uint16_t)(g_e1000.io_base + 4), value);
+}
+
+static void e1000_reset_controller(void) {
+    uint32_t ctrl = e1000_read_reg(E1000_REG_CTRL);
+    e1000_write_reg(E1000_REG_CTRL, ctrl | E1000_CTRL_RST);
+
+    for (uint32_t spin = 0; spin < 1000; spin++) {
+        io_wait();
+    }
+
+    e1000_write_reg(E1000_REG_IMC, 0xFFFFFFFFU);
+}
+
+static bool e1000_detect_eeprom(void) {
+    for (uint32_t i = 0; i < 1000; i++) {
+        e1000_write_reg(E1000_REG_EERD, E1000_EERD_START);
+        if (e1000_read_reg(E1000_REG_EERD) & E1000_EERD_DONE) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static uint16_t e1000_read_eeprom_word(uint8_t addr) {
+    uint32_t cmd = E1000_EERD_START | ((uint32_t)addr << 8);
+    e1000_write_reg(E1000_REG_EERD, cmd);
+
+    for (uint32_t i = 0; i < 100000; i++) {
+        uint32_t val = e1000_read_reg(E1000_REG_EERD);
+        if (val & E1000_EERD_DONE) {
+            return (uint16_t)((val >> 16) & 0xFFFF);
+        }
+    }
+
+    return 0;
+}
+
+static void e1000_read_mac(void) {
+    if (g_e1000.has_eeprom) {
+        uint16_t word0 = e1000_read_eeprom_word(0);
+        uint16_t word1 = e1000_read_eeprom_word(1);
+        uint16_t word2 = e1000_read_eeprom_word(2);
+
+        g_e1000.mac[0] = (uint8_t)(word0 & 0xFF);
+        g_e1000.mac[1] = (uint8_t)(word0 >> 8);
+        g_e1000.mac[2] = (uint8_t)(word1 & 0xFF);
+        g_e1000.mac[3] = (uint8_t)(word1 >> 8);
+        g_e1000.mac[4] = (uint8_t)(word2 & 0xFF);
+        g_e1000.mac[5] = (uint8_t)(word2 >> 8);
+        return;
+    }
+
+    uint32_t ral = e1000_read_reg(E1000_REG_RAL);
+    uint32_t rah = e1000_read_reg(E1000_REG_RAH);
+    g_e1000.mac[0] = (uint8_t)(ral & 0xFF);
+    g_e1000.mac[1] = (uint8_t)((ral >> 8) & 0xFF);
+    g_e1000.mac[2] = (uint8_t)((ral >> 16) & 0xFF);
+    g_e1000.mac[3] = (uint8_t)((ral >> 24) & 0xFF);
+    g_e1000.mac[4] = (uint8_t)(rah & 0xFF);
+    g_e1000.mac[5] = (uint8_t)((rah >> 8) & 0xFF);
+}
+
+static void e1000_print_mac(const char *prefix) {
+    serial_printf("%s%x:%x:%x:%x:%x:%x\n",
+        (uint64_t)(uintptr_t)prefix,
+        (uint64_t)g_e1000.mac[0],
+        (uint64_t)g_e1000.mac[1],
+        (uint64_t)g_e1000.mac[2],
+        (uint64_t)g_e1000.mac[3],
+        (uint64_t)g_e1000.mac[4],
+        (uint64_t)g_e1000.mac[5]);
+}
+
+static uint32_t e1000_refresh_status(void) {
+    g_e1000.status = e1000_read_reg(E1000_REG_STATUS);
+    g_e1000.link_up = (g_e1000.status & E1000_STATUS_LINK_UP) != 0;
+    return g_e1000.status;
+}
+
+static void e1000_wait_for_link(void) {
+    for (uint32_t spin = 0; spin < 200000; spin++) {
+        if (e1000_refresh_status() & E1000_STATUS_LINK_UP) {
+            return;
+        }
+    }
+}
+
+static void e1000_build_test_src_mac(uint8_t mac[6]) {
+    bool zero = true;
+    for (uint32_t i = 0; i < 6; i++) {
+        mac[i] = g_e1000.mac[i];
+        if (mac[i] != 0) {
+            zero = false;
+        }
+    }
+
+    if (!zero) {
+        return;
+    }
+
+    mac[0] = 0x02;
+    mac[1] = 0xA1;
+    mac[2] = 0x05;
+    mac[3] = g_e1000.bus;
+    mac[4] = g_e1000.slot;
+    mac[5] = g_e1000.function;
+}
+
+static aios_status_t e1000_init_rx_ring(void) {
+    memset(g_rx_ring, 0, sizeof(g_rx_ring));
+    memset(g_rx_buffers, 0, sizeof(g_rx_buffers));
+
+    for (uint32_t i = 0; i < E1000_RX_RING_SIZE; i++) {
+        g_rx_ring[i].addr = (uint64_t)(uintptr_t)&g_rx_buffers[i][0];
+    }
+
+    e1000_write_reg(E1000_REG_RDBAL, (uint32_t)(uintptr_t)&g_rx_ring[0]);
+    e1000_write_reg(E1000_REG_RDBAH, 0);
+    e1000_write_reg(E1000_REG_RDLEN, sizeof(g_rx_ring));
+    e1000_write_reg(E1000_REG_RDH, 0);
+    e1000_write_reg(E1000_REG_RDT, E1000_RX_RING_SIZE - 1);
+    e1000_write_reg(E1000_REG_RCTL,
+        E1000_RCTL_EN |
+        E1000_RCTL_BAM |
+        E1000_RCTL_SECRC);
+
+    g_rx_tail = E1000_RX_RING_SIZE - 1;
+    g_e1000.rx_ready = true;
+    return AIOS_OK;
+}
+
+static aios_status_t e1000_init_tx_ring(void) {
+    memset(g_tx_ring, 0, sizeof(g_tx_ring));
+    memset(g_tx_buffers, 0, sizeof(g_tx_buffers));
+
+    for (uint32_t i = 0; i < E1000_TX_RING_SIZE; i++) {
+        g_tx_ring[i].addr = (uint64_t)(uintptr_t)&g_tx_buffers[i][0];
+        g_tx_ring[i].status = E1000_TX_STATUS_DD;
+    }
+
+    e1000_write_reg(E1000_REG_TDBAL, (uint32_t)(uintptr_t)&g_tx_ring[0]);
+    e1000_write_reg(E1000_REG_TDBAH, 0);
+    e1000_write_reg(E1000_REG_TDLEN, sizeof(g_tx_ring));
+    e1000_write_reg(E1000_REG_TDH, 0);
+    e1000_write_reg(E1000_REG_TDT, 0);
+    e1000_write_reg(E1000_REG_TCTL,
+        E1000_TCTL_EN |
+        E1000_TCTL_PSP |
+        (0x0F << 4) |
+        (0x40 << 12));
+    e1000_write_reg(E1000_REG_TIPG, 0x0060200A);
+
+    g_tx_tail = 0;
+    g_e1000.tx_ready = true;
+    return AIOS_OK;
+}
+
+static void e1000_rearm_rx_desc(uint32_t index) {
+    g_rx_ring[index].addr = (uint64_t)(uintptr_t)&g_rx_buffers[index][0];
+    g_rx_ring[index].length = 0;
+    g_rx_ring[index].checksum = 0;
+    g_rx_ring[index].status = 0;
+    g_rx_ring[index].errors = 0;
+    g_rx_ring[index].special = 0;
+    g_rx_tail = index;
+    e1000_write_reg(E1000_REG_RDT, index);
+}
+
+aios_status_t e1000_driver_rx_poll(uint16_t *out_length) {
+    uint32_t index;
+    e1000_rx_desc_t *desc;
+    aios_status_t status = AIOS_ERR_BUSY;
+
+    if (out_length) {
+        *out_length = 0;
+    }
+
+    if (!g_e1000.present || !g_e1000.ready || !g_e1000.rx_ready) {
+        g_e1000.last_rx_status = AIOS_ERR_INVAL;
+        g_e1000.last_rx_length = 0;
+        return AIOS_ERR_INVAL;
+    }
+
+    index = (g_rx_tail + 1) % E1000_RX_RING_SIZE;
+    desc = &g_rx_ring[index];
+    g_e1000.rx_poll_count++;
+
+    if ((desc->status & E1000_RX_STATUS_DD) == 0) {
+        g_e1000.last_rx_status = AIOS_ERR_BUSY;
+        g_e1000.last_rx_length = 0;
+        return AIOS_ERR_BUSY;
+    }
+
+    g_e1000.last_rx_length = desc->length;
+
+    if ((desc->status & E1000_RX_STATUS_EOP) == 0 ||
+        desc->errors != 0 ||
+        desc->length == 0 ||
+        desc->length > E1000_RX_BUF_SIZE) {
+        g_e1000.rx_drop_count++;
+        status = AIOS_ERR_IO;
+    } else {
+        g_e1000.rx_frame_count++;
+        status = AIOS_OK;
+        if (out_length) {
+            *out_length = desc->length;
+        }
+    }
+
+    e1000_rearm_rx_desc(index);
+    g_e1000.last_rx_status = status;
+    return status;
+}
+
+static aios_status_t e1000_send_frame(const uint8_t *frame, uint16_t length) {
+    if (!g_e1000.ready || !g_e1000.tx_ready || !frame) {
+        return AIOS_ERR_INVAL;
+    }
+
+    e1000_refresh_status();
+
+    if (length == 0 || length > E1000_TX_BUF_SIZE) {
+        return AIOS_ERR_INVAL;
+    }
+
+    e1000_tx_desc_t *desc = &g_tx_ring[g_tx_tail];
+    if ((desc->status & E1000_TX_STATUS_DD) == 0) {
+        return AIOS_ERR_BUSY;
+    }
+
+    memcpy(g_tx_buffers[g_tx_tail], frame, length);
+    desc->length = length;
+    desc->cso = 0;
+    desc->cmd = E1000_TX_CMD_EOP | E1000_TX_CMD_IFCS | E1000_TX_CMD_RS;
+    desc->status = 0;
+    desc->css = 0;
+    desc->special = 0;
+
+    uint32_t desc_index = g_tx_tail;
+    g_tx_tail = (g_tx_tail + 1) % E1000_TX_RING_SIZE;
+    e1000_write_reg(E1000_REG_TDT, g_tx_tail);
+
+    for (uint32_t spin = 0; spin < 1000000; spin++) {
+        if (g_tx_ring[desc_index].status & E1000_TX_STATUS_DD) {
+            return AIOS_OK;
+        }
+    }
+
+    return AIOS_ERR_TIMEOUT;
+}
+
+aios_status_t e1000_driver_init(void) {
+    memset(&g_e1000, 0, sizeof(g_e1000));
+
+    const platform_device_t *candidate = NULL;
+    int32_t candidate_score = 0;
+    uint32_t candidate_count = 0;
+    for (uint32_t i = 0; i < platform_probe_count(); i++) {
+        const platform_device_t *dev = platform_probe_get(i);
+        if (!dev || dev->kind != PLATFORM_DEVICE_ETHERNET) {
+            continue;
+        }
+        if (e1000_is_supported(dev->vendor_id, dev->device_id)) {
+            int32_t score = e1000_candidate_score(dev);
+            candidate_count++;
+            if (e1000_candidate_better(dev, score, candidate, candidate_score)) {
+                candidate = dev;
+                candidate_score = score;
+            }
+        }
+    }
+
+    if (!candidate) {
+        kprintf("    No Intel E1000-compatible controller found.\n");
+        serial_write("[NET] No Intel E1000-compatible controller found\n");
+        return AIOS_OK;
+    }
+
+    g_e1000.present = true;
+    g_e1000.bus = candidate->bus;
+    g_e1000.slot = candidate->slot;
+    g_e1000.function = candidate->function;
+    g_e1000.vendor_id = candidate->vendor_id;
+    g_e1000.device_id = candidate->device_id;
+
+    kprintf("    E1000 bootstrap select: score=%d choices=%u pci=%u:%u.%u device=%x\n",
+        (int64_t)candidate_score,
+        (uint64_t)candidate_count,
+        (uint64_t)candidate->bus,
+        (uint64_t)candidate->slot,
+        (uint64_t)candidate->function,
+        (uint64_t)candidate->device_id);
+    serial_printf("[NET] Selected e1000 candidate score=%d candidates=%u pci=%u:%u.%u device=%x mmio_bars=%u io_bars=%u pcie=%u\n",
+        (int64_t)candidate_score,
+        (uint64_t)candidate_count,
+        (uint64_t)candidate->bus,
+        (uint64_t)candidate->slot,
+        (uint64_t)candidate->function,
+        (uint64_t)candidate->device_id,
+        (uint64_t)candidate->mmio_bar_count,
+        (uint64_t)candidate->io_bar_count,
+        candidate->pcie_capable ? 1ULL : 0ULL);
+
+    (void)pci_enable_device(g_e1000.bus, g_e1000.slot, g_e1000.function,
+        true, true, true);
+
+    for (uint8_t i = 0; i < PCI_BAR_COUNT; i++) {
+        pci_bar_t bar;
+        if (pci_read_bar(g_e1000.bus, g_e1000.slot, g_e1000.function, i, &bar) != AIOS_OK ||
+            !bar.present) {
+            continue;
+        }
+
+        if (bar.io_space && g_e1000.io_base == 0) {
+            g_e1000.io_base = (uint16_t)bar.base;
+        } else if (bar.mem_space && g_e1000.mmio_base == 0) {
+            g_e1000.mmio_base = bar.base;
+        }
+
+        if (bar.is_64bit && i + 1 < PCI_BAR_COUNT) {
+            i++;
+        }
+    }
+
+    if (g_e1000.io_base == 0 && g_e1000.mmio_base == 0) {
+        serial_write("[NET] E1000 found but no usable register BAR exposed\n");
+        return AIOS_OK;
+    }
+
+    serial_printf("[NET] E1000 BARs mmio=%x io=%x\n",
+        (uint64_t)g_e1000.mmio_base,
+        (uint64_t)g_e1000.io_base);
+
+    e1000_reset_controller();
+    e1000_write_reg(E1000_REG_CTRL, e1000_read_reg(E1000_REG_CTRL) | E1000_CTRL_SLU);
+    e1000_wait_for_link();
+    g_e1000.has_eeprom = e1000_detect_eeprom();
+    e1000_read_mac();
+    e1000_init_rx_ring();
+    e1000_init_tx_ring();
+    g_e1000.ready = true;
+    g_e1000.last_rx_status = AIOS_ERR_BUSY;
+    g_e1000.last_tx_status = AIOS_OK;
+
+    e1000_refresh_status();
+
+    kprintf("    Intel E1000 ready: mmio=0x%x io=0x%x status=0x%x link=%s\n",
+        (uint64_t)g_e1000.mmio_base,
+        (uint64_t)g_e1000.io_base,
+        (uint64_t)g_e1000.status,
+        g_e1000.link_up ? "up" : "down");
+    serial_printf("[NET] E1000 ready mmio=%x io=%x status=%x link=%s eeprom=%u\n",
+        (uint64_t)g_e1000.mmio_base,
+        (uint64_t)g_e1000.io_base,
+        (uint64_t)g_e1000.status,
+        (uint64_t)(uintptr_t)(g_e1000.link_up ? "up" : "down"),
+        g_e1000.has_eeprom ? 1ULL : 0ULL);
+    serial_printf("[NET] E1000 RX ring ready=%u rdh=%u rdt=%u desc=%u buf=%u\n",
+        g_e1000.rx_ready ? 1ULL : 0ULL,
+        (uint64_t)e1000_read_reg(E1000_REG_RDH),
+        (uint64_t)e1000_read_reg(E1000_REG_RDT),
+        (uint64_t)E1000_RX_RING_SIZE,
+        (uint64_t)E1000_RX_BUF_SIZE);
+    e1000_print_mac("[NET] E1000 MAC=");
+    g_e1000.last_tx_status = e1000_driver_tx_smoke();
+    if (g_e1000.last_tx_status == AIOS_OK) {
+        serial_write("[NET] E1000 TX smoke PASS\n");
+    } else {
+        serial_write("[NET] E1000 TX smoke FAIL\n");
+    }
+
+    return AIOS_OK;
+}
+
+bool e1000_driver_ready(void) {
+    return g_e1000.ready;
+}
+
+aios_status_t e1000_driver_tx_smoke(void) {
+    uint8_t frame[E1000_TEST_FRAME_LEN];
+    uint8_t src_mac[6];
+    memset(frame, 0, sizeof(frame));
+
+    for (uint32_t i = 0; i < 6; i++) {
+        frame[i] = 0xFF;
+    }
+
+    e1000_build_test_src_mac(src_mac);
+    memcpy(&frame[6], src_mac, 6);
+    frame[12] = 0x88;
+    frame[13] = 0xB5;
+
+    const char payload[] = "AIOS e1000 tx smoke";
+    memcpy(&frame[14], payload, sizeof(payload) - 1);
+
+    aios_status_t status = e1000_send_frame(frame, sizeof(frame));
+    g_e1000.last_tx_status = status;
+    return status;
+}
+
+aios_status_t e1000_driver_info(e1000_driver_info_t *out) {
+    if (!out) {
+        return AIOS_ERR_INVAL;
+    }
+
+    out->present = g_e1000.present;
+    out->ready = g_e1000.ready;
+    out->link_up = g_e1000.link_up;
+    out->has_eeprom = g_e1000.has_eeprom;
+    out->rx_ready = g_e1000.rx_ready;
+    out->tx_ready = g_e1000.tx_ready;
+    out->bus = g_e1000.bus;
+    out->slot = g_e1000.slot;
+    out->function = g_e1000.function;
+    out->vendor_id = g_e1000.vendor_id;
+    out->device_id = g_e1000.device_id;
+    out->io_base = g_e1000.io_base;
+    out->mmio_base = g_e1000.mmio_base;
+    out->status = g_e1000.status;
+    out->last_rx_status = g_e1000.last_rx_status;
+    out->last_tx_status = g_e1000.last_tx_status;
+    out->last_rx_length = g_e1000.last_rx_length;
+    out->rx_poll_count = g_e1000.rx_poll_count;
+    out->rx_frame_count = g_e1000.rx_frame_count;
+    out->rx_drop_count = g_e1000.rx_drop_count;
+    for (uint32_t i = 0; i < 6; i++) {
+        out->mac[i] = g_e1000.mac[i];
+    }
+
+    return AIOS_OK;
+}
+
+void e1000_driver_dump(void) {
+    if (!g_e1000.present) {
+        serial_write("[NET] E1000 dump: controller not present\n");
+        return;
+    }
+
+    e1000_refresh_status();
+
+    serial_printf("[NET] E1000 dump vendor=%x device=%x io=%x status=%x link=%s\n",
+        (uint64_t)g_e1000.vendor_id,
+        (uint64_t)g_e1000.device_id,
+        (uint64_t)g_e1000.io_base,
+        (uint64_t)g_e1000.status,
+        (uint64_t)(uintptr_t)(g_e1000.link_up ? "up" : "down"));
+    serial_printf("[NET] E1000 tx_ready=%u tail=%u\n",
+        g_e1000.tx_ready ? 1ULL : 0ULL,
+        (uint64_t)g_tx_tail);
+    serial_printf("[NET] E1000 rx_ready=%u rdh=%u rdt=%u sw_tail=%u\n",
+        g_e1000.rx_ready ? 1ULL : 0ULL,
+        (uint64_t)e1000_read_reg(E1000_REG_RDH),
+        (uint64_t)e1000_read_reg(E1000_REG_RDT),
+        (uint64_t)g_rx_tail);
+    serial_printf("[NET] E1000 last_rx_status=%d len=%u polls=%u frames=%u drops=%u\n",
+        (int64_t)g_e1000.last_rx_status,
+        (uint64_t)g_e1000.last_rx_length,
+        (uint64_t)g_e1000.rx_poll_count,
+        (uint64_t)g_e1000.rx_frame_count,
+        (uint64_t)g_e1000.rx_drop_count);
+    serial_printf("[NET] E1000 last_tx_status=%d\n",
+        (int64_t)g_e1000.last_tx_status);
+    e1000_print_mac("[NET] E1000 MAC=");
+}
+
+__asm__(".section .note.GNU-stack,\"\",@progbits\n\t.previous");

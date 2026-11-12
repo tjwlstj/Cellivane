@@ -1,0 +1,1515 @@
+from __future__ import annotations
+
+import json
+import re
+from pathlib import Path
+
+from lib.common import BUILD_DIR, ensure_dir
+
+
+ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
+
+CHECKPOINT_PATTERNS = {
+    "multiboot": "[BOOT] Multiboot2 verified.",
+    "heap": "[INIT] Kernel Heap (kmalloc/kfree)... OK",
+    "idt": "[INIT] Interrupt Descriptor Table (IDT)... OK",
+    "trapframe_contract": "[TRAP] frame contract selftest PASS",
+    "time_source": "[INIT] Kernel Time Source... OK",
+    "timer_irq": "[TIMER] PIT IRQ ready",
+    "acpi": "[INIT] ACPI Fabric Parser... OK",
+    "pci_core": "[INIT] PCI Core... OK",
+    "tensor_mm": "[INIT] Tensor Memory Manager... OK",
+    "scheduler": "[INIT] AI Workload Scheduler... OK",
+    "selftest": "[SELFTEST] Memory microbench PASS",
+    "accel_hal": "[INIT] Accelerator HAL... OK",
+    "peripheral_probe": "[INIT] Peripheral Probe Layer... OK",
+    "memory_fabric": "[INIT] Memory Fabric Foundation... OK",
+    "network_bootstrap": "[INIT] Intel E1000 Ethernet... OK",
+    "usb_bootstrap": "[INIT] USB Host Bootstrap... OK",
+    "storage_bootstrap": "[INIT] Storage Host Bootstrap... OK",
+    "user_access": "[UACCESS] selftest PASS",
+    "syscall": "[INIT] AI System Call Interface... OK",
+    "autonomy": "[INIT] Autonomy Control Plane... OK",
+    "slm_orchestrator": "[INIT] SLM Hardware Orchestrator... OK",
+    "nodebit": "[INIT] NodeBit Policy Gate... OK",
+    "resource_ledger": "[RESOURCE] ledger selftest PASS",
+    "pressure_tracker": "[PRESSURE] tracker selftest PASS",
+    "keyboard": "[INIT] PS/2 Keyboard... OK",
+    "ring3_scaffold": "[USER] Ring3 scaffold ready=1",
+    "bootstrap_process": "[PROC] bootstrap ownership selftest PASS",
+    "bootstrap_process_stack": "[USER] bootstrap process stack PASS",
+    "bootstrap_process_pair": "[USER] bootstrap process pair PASS",
+    "user_trap_capture": "[TRAP] user frame capture PASS",
+    "process_trap_snapshot": "[PROC] trap evidence snapshot PASS",
+    "process_event_journal": "[PROC] process event journal PASS",
+    "ring3_entry_ac_hardening": "[SEC] ring3 entry AC hardening PASS",
+    "kernel_room_management": "[ROOM] management hierarchy selftest PASS",
+    "kernel_room_binding": "[ROOM] source binding selftest PASS",
+    "kernel_room": "[ROOM] snapshot stability=",
+    "health": "[HEALTH] stability=",
+    "ready": "AIOS Kernel Ready",
+    "boot_complete": "[KERNEL] Boot complete. Launching interactive shell...",
+    "shell": "[SHELL] Interactive shell started",
+}
+
+SELFTEST_RESULT_RE = re.compile(
+    r"\[SELFTEST\] Memory microbench (?P<status>\w+) \((?P<size_kib>\d+) KiB x (?P<iterations>\d+)\)"
+)
+SELFTEST_METRIC_RE = re.compile(
+    r"\[SELFTEST\] (?P<name>memset|memcpy|memmove)=(?P<cycles>\d+) cyc \((?P<cyc_per_kib>\d+) cyc/KiB\)"
+)
+PROFILE_MAIN_RE = re.compile(
+    r"\[PROFILE\] TSC=(?P<tsc_khz>\d+) kHz invariant=(?P<invariant>\d+) memcpy=(?P<memcpy_mib_s>\d+) MiB/s tier=(?P<tier>\w+)"
+)
+PROFILE_CACHE_RE = re.compile(
+    r"\[PROFILE\] Cache KiB L1=(?P<l1_kib>\d+) L2=(?P<l2_kib>\d+) L3=(?P<l3_kib>\d+) \| latency x100 cyc L1=(?P<l1_latency_x100>\d+) L2=(?P<l2_latency_x100>\d+) L3=(?P<l3_latency_x100>\d+) DRAM=(?P<dram_latency_x100>\d+)"
+)
+DEVICE_SUMMARY_RE = re.compile(
+    r"\[DEV\] Summary: pci=(?P<pci>\d+) matched=(?P<matched>\d+) eth=(?P<eth>\d+) wifi=(?P<wifi>\d+) bt=(?P<bt>\d+) usb=(?P<usb>\d+) storage=(?P<storage>\d+)"
+)
+HEALTH_RE = re.compile(
+    r"\[HEALTH\] stability=(?P<stability>\w+) ok=(?P<ok>\d+) degraded=(?P<degraded>\d+) failed=(?P<failed>\d+) unknown=(?P<unknown>\d+)(?: io_degraded=(?P<io_degraded>\d+)| req_fail=(?P<req_fail>\d+) autonomy=(?P<autonomy>\d+) risky_io=(?P<risky_io>\d+))"
+)
+NETWORK_READY_RE = re.compile(
+    r"\[NET\] E1000 ready mmio=(?P<mmio>\S+) io=(?P<io>\S+) status=(?P<status>\S+) link=(?P<link>\w+) eeprom=(?P<eeprom>\d+)"
+)
+NETWORK_SELECTION_RE = re.compile(
+    r"\[NET\] Selected e1000 candidate score=(?P<score>-?\d+) candidates=(?P<candidates>\d+) pci=(?P<pci>\S+) device=(?P<device>\S+) mmio_bars=(?P<mmio_bars>\d+) io_bars=(?P<io_bars>\d+) pcie=(?P<pcie>\d+)"
+)
+USB_SELECTION_RE = re.compile(
+    r"\[USB\] Selected bootstrap candidate=(?P<controller>\w+) score=(?P<score>-?\d+) candidates=(?P<candidates>\d+) pci=(?P<pci>\S+) mmio_bars=(?P<mmio_bars>\d+) io_bars=(?P<io_bars>\d+) pcie=(?P<pcie>\d+)"
+)
+USB_READY_RE = re.compile(
+    r"\[USB\] (?P<controller>\w+) ready=(?P<ready>\d+) vendor=(?P<vendor>\S+) device=(?P<device>\S+) pci=(?P<pci>\S+) cmd=(?P<cmd>\S+) mmio=(?P<mmio>\S+) io=(?P<io>\S+)"
+)
+STORAGE_SELECTION_RE = re.compile(
+    r"\[STO\] Selected bootstrap candidate=(?P<controller>\w+) score=(?P<score>-?\d+) candidates=(?P<candidates>\d+) pci=(?P<pci>\S+) mmio_bars=(?P<mmio_bars>\d+) io_bars=(?P<io_bars>\d+) pcie=(?P<pcie>\d+)"
+)
+STORAGE_READY_RE = re.compile(
+    r"\[STO\] (?P<controller>\w+) ready=(?P<ready>\d+) vendor=(?P<vendor>\S+) device=(?P<device>\S+) pci=(?P<pci>\S+) cmd=(?P<cmd>\S+) mmio=(?P<mmio>\S+) io=(?P<io>\S+)"
+)
+STORAGE_CHANNEL_RE = re.compile(
+    r"\[STO\] IDE channels primary=(?P<primary_cmd>\S+)/(?P<primary_ctl>\S+) status=(?P<primary_status>\S+) live=(?P<primary_live>\d+) secondary=(?P<secondary_cmd>\S+)/(?P<secondary_ctl>\S+) status=(?P<secondary_status>\S+) live=(?P<secondary_live>\d+)"
+)
+SLM_MAIN_RE = re.compile(
+    r"\[SLM\] MainAI mode=(?P<mode>\w+) sco=(?P<sco>-?\d+) workers=(?P<workers>\d+) pipeline_qd=(?P<pipeline_qd>\d+) depth=(?P<depth>\d+) ring=(?P<ring_used>\d+)/(?P<ring_total>\d+)"
+)
+SLM_RUNTIME_RE = re.compile(
+    r"\[SLM\] Runtime state=(?P<state>[\w\-]+) status=(?P<status>-?\d+) snapshot_abi=(?P<snapshot_abi>\d+) nodebits=(?P<nodebits>\d+) generation=(?P<generation>\d+)"
+)
+SLM_USER_AI_RE = re.compile(
+    r"\[SLM\] UserAI access score=(?P<score>\d+) flags=(?P<flags>\S+) direct_mmio=(?P<direct_mmio>\d+) mediated=(?P<mediated>\d+) clock=(?P<clock_main>\d+)/(?P<clock_worker>\d+)/(?P<clock_io>\d+)/(?P<clock_memory>\d+)/(?P<clock_guardian>\d+)/(?P<clock_reserve>\d+) slice=(?P<slice_us>\d+)us poll=(?P<poll_us>\d+)us"
+)
+SLM_SEEDED_RE = re.compile(r"\[SLM\] Seeded plan (?P<plan_id>\d+) label=(?P<label>[a-z0-9\-]+)")
+USER_SCAFFOLD_RE = re.compile(
+    r"\[USER\] Ring3 scaffold ready=(?P<ready>\d+) tr=(?P<tr>\S+) user_cs=(?P<user_cs>\S+) user_ds=(?P<user_ds>\S+) rsp0=(?P<rsp0>\S+) gdt_base=(?P<gdt_base>\S+) gdt_limit=(?P<gdt_limit>\d+)"
+)
+USER_ACCESS_RE = re.compile(
+    r"\[UACCESS\] selftest (?P<status>\w+) structural=(?P<structural>\d+) copy=(?P<copy>\d+) zero_copy=(?P<zero_copy>\d+)(?: string=(?P<string>\d+))?"
+)
+PROCESS_OWNERSHIP_RE = re.compile(
+    r"\[PROC\] bootstrap ownership selftest (?P<status>\w+) slots=(?P<slots>\d+) owned=(?P<owned>\d+) stack_bytes=(?P<stack_bytes>\d+) unique_cr3=(?P<unique_cr3>\d+) unique_backing=(?P<unique_backing>\d+) unique_stack=(?P<unique_stack>\d+)"
+)
+PROCESS_STACK_RE = re.compile(
+    r"\[USER\] bootstrap process stack (?P<status>\w+) pid=(?P<pid>\d+) slot=(?P<slot>\d+) process_bound=(?P<process_bound>\d+) kstack_bytes=(?P<kstack_bytes>\d+) rsp0_changed=(?P<rsp0_changed>\d+) rsp0_published=(?P<rsp0_published>\d+) int80_entries=(?P<int80_entries>\d+) all_int80_entries_in_stack=(?P<all_int80_entries_in_stack>\d+) rsp0_restored=(?P<rsp0_restored>\d+) kstack_floor_canary=(?P<kstack_floor_canary>\d+)"
+)
+PROCESS_PAIR_RE = re.compile(
+    r"\[USER\] bootstrap process pair (?P<status>\w+) "
+    r"runs=(?P<runs>\d+) order=(?P<order>\S+) "
+    r"pid_a=(?P<pid_a>\d+) slot_a=(?P<slot_a>\d+) "
+    r"pid_b=(?P<pid_b>\d+) slot_b=(?P<slot_b>\d+) "
+    r"distinct_pid=(?P<distinct_pid>\d+) "
+    r"distinct_slot=(?P<distinct_slot>\d+) "
+    r"distinct_cr3=(?P<distinct_cr3>\d+) "
+    r"distinct_backing=(?P<distinct_backing>\d+) "
+    r"distinct_stack=(?P<distinct_stack>\d+) "
+    r"int80_a=(?P<int80_a>\d+) int80_b=(?P<int80_b>\d+) "
+    r"between_clean=(?P<between_clean>\d+) "
+    r"current_pid=(?P<current_pid>\d+) last_pid=(?P<last_pid>\d+) "
+    r"rsp0_publishes=(?P<rsp0_publishes>\d+) "
+    r"rsp0_restores=(?P<rsp0_restores>\d+) "
+    r"tss_rsp0_baseline=(?P<tss_rsp0_baseline>\d+) "
+    r"both_restored=(?P<both_restored>\d+)"
+)
+PROCESS_TRAP_SNAPSHOT_PREFIX = "[PROC] trap evidence snapshot "
+PROCESS_TRAP_SNAPSHOT_RE = re.compile(
+    r"^\[PROC\] trap evidence snapshot (?P<status>\w+) "
+    r"schema=(?P<schema>\d+) captures=(?P<captures>\d+) "
+    r"pid_a=(?P<pid_a>\d+) slot_a=(?P<slot_a>\d+) "
+    r"seq_a=(?P<seq_a>\d+) valid_a=(?P<valid_a>\d+) "
+    r"owner_a=(?P<owner_a>\d+) frame_a=(?P<frame_a>\d+) "
+    r"cr3_a=(?P<cr3_a>\d+) rsp0_a=(?P<rsp0_a>\d+) "
+    r"pid_b=(?P<pid_b>\d+) slot_b=(?P<slot_b>\d+) "
+    r"seq_b=(?P<seq_b>\d+) valid_b=(?P<valid_b>\d+) "
+    r"owner_b=(?P<owner_b>\d+) frame_b=(?P<frame_b>\d+) "
+    r"cr3_b=(?P<cr3_b>\d+) rsp0_b=(?P<rsp0_b>\d+) "
+    r"distinct_storage=(?P<distinct_storage>\d+) "
+    r"current_pid=(?P<current_pid>\d+) "
+    r"stale_owner=(?P<stale_owner>\d+) "
+    r"resume_ready=(?P<resume_ready>\d+)$"
+)
+PROCESS_EVENT_JOURNAL_PREFIX = "[PROC] process event journal "
+PROCESS_EVENT_JOURNAL_RE = re.compile(
+    r"^\[PROC\] process event journal (?P<status>\w+) "
+    r"schema=(?P<schema>\d+) events=(?P<event_count>\d+) "
+    r"lifecycle=(?P<lifecycle>\d+) captures=(?P<captures>\d+) "
+    r"seqs=(?P<seqs>\d+(?:,\d+)*) "
+    r"kinds=(?P<kinds>\d+(?:,\d+)*) "
+    r"reasons=(?P<reasons>\d+(?:,\d+)*) "
+    r"from_pids=(?P<from_pids>\d+(?:,\d+)*) "
+    r"to_pids=(?P<to_pids>\d+(?:,\d+)*) "
+    r"slots=(?P<slots>\d+(?:,\d+)*) "
+    r"generations=(?P<generations>\d+(?:,\d+)*) "
+    r"capture_seqs=(?P<capture_seqs>\d+(?:,\d+)*) "
+    r"owner_ok=(?P<owner_ok>\d+(?:,\d+)*) "
+    r"cr3_ok=(?P<cr3_ok>\d+(?:,\d+)*) "
+    r"rsp0_ok=(?P<rsp0_ok>\d+(?:,\d+)*) "
+    r"if0=(?P<if0>\d+(?:,\d+)*) "
+    r"snapshot_refs=(?P<snapshot_refs>\d+(?:,\d+)*) "
+    r"outcomes=(?P<outcomes>\d+(?:,\d+)*) "
+    r"capture_seq_separate=(?P<capture_seq_separate>\d+) "
+    r"current_pid=(?P<current_pid>\d+) "
+    r"stale_owner=(?P<stale_owner>\d+) "
+    r"dropped=(?P<dropped>\d+) overflow=(?P<overflow>\d+) "
+    r"evidence_only=(?P<evidence_only>\d+) "
+    r"switch_events=(?P<switch_events>\d+) "
+    r"resume_ready=(?P<resume_ready>\d+)$"
+)
+CPU_SECURITY_PREFIX = "[SEC] nx="
+CPU_SECURITY_RE = re.compile(
+    r"^\[SEC\] nx=(?P<nx>[01]) smep=(?P<smep>[01]) "
+    r"umip=(?P<umip>[01]) smap_supported=(?P<smap_supported>[01]) "
+    r"smap=(?P<smap>[01])$"
+)
+RING3_ENTRY_AC_HARDENING_PREFIX = "[SEC] ring3 entry AC hardening "
+SECURITY_ROOM_PREFIX = "[ROOM] snapshot "
+RING3_ENTRY_AC_HARDENING_RE = re.compile(
+    r"^\[SEC\] ring3 entry AC hardening (?P<status>PASS) "
+    r"schema=(?P<schema>0|[1-9][0-9]{0,9}) "
+    r"smap_supported=(?P<smap_supported>0|[1-9][0-9]{0,9}) "
+    r"smap=(?P<smap>0|[1-9][0-9]{0,9}) "
+    r"gate_active=(?P<gate_active>0|[1-9][0-9]{0,9}) "
+    r"common_entries=(?P<common_entries>0|[1-9][0-9]{0,9}) "
+    r"common_saved_ac=(?P<common_saved_ac>0|[1-9][0-9]{0,9}) "
+    r"common_clac=(?P<common_clac>0|[1-9][0-9]{0,9}) "
+    r"common_fallback=(?P<common_fallback>0|[1-9][0-9]{0,9}) "
+    r"common_post_ac0=(?P<common_post_ac0>0|[1-9][0-9]{0,9}) "
+    r"int80_entries=(?P<int80_entries>0|[1-9][0-9]{0,9}) "
+    r"int80_saved_ac=(?P<int80_saved_ac>0|[1-9][0-9]{0,9}) "
+    r"int80_clac=(?P<int80_clac>0|[1-9][0-9]{0,9}) "
+    r"int80_fallback=(?P<int80_fallback>0|[1-9][0-9]{0,9}) "
+    r"int80_post_ac0=(?P<int80_post_ac0>0|[1-9][0-9]{0,9}) "
+    r"gate_skips=(?P<gate_skips>0|[1-9][0-9]{0,9}) "
+    r"gate_mismatch=(?P<gate_mismatch>0|[1-9][0-9]{0,9})$"
+)
+CPU_PROFILE_EXPECTATIONS = {
+    "default": {
+        "feature": {
+            "nx": 1, "smep": 0, "umip": 0,
+            "smap_supported": 0, "smap": 0,
+        },
+        "entry": {
+            "schema": 1, "smap_supported": 0, "smap": 0,
+            "gate_active": 0, "common_entries": 2,
+            "common_saved_ac": 2, "common_clac": 0,
+            "common_fallback": 2, "common_post_ac0": 2,
+            "int80_entries": 6, "int80_saved_ac": 4,
+            "int80_clac": 0, "int80_fallback": 6,
+            "int80_post_ac0": 6, "gate_skips": 8,
+            "gate_mismatch": 0,
+        },
+    },
+    "max-smap": {
+        "feature": {
+            "nx": 1, "smep": 1, "umip": 1,
+            "smap_supported": 1, "smap": 1,
+        },
+        "entry": {
+            "schema": 1, "smap_supported": 1, "smap": 1,
+            "gate_active": 1, "common_entries": 2,
+            "common_saved_ac": 2, "common_clac": 2,
+            "common_fallback": 0, "common_post_ac0": 2,
+            "int80_entries": 6, "int80_saved_ac": 4,
+            "int80_clac": 6, "int80_fallback": 0,
+            "int80_post_ac0": 6, "gate_skips": 0,
+            "gate_mismatch": 0,
+        },
+    },
+}
+ROOM_SNAPSHOT_RE = re.compile(
+    r"^\[ROOM\] snapshot stability=(?P<stability>[a-z][a-z0-9-]*) "
+    r"ok=(?P<ok>0|[1-9][0-9]{0,9}) degraded=(?P<degraded>0|[1-9][0-9]{0,9}) "
+    r"failed=(?P<failed>0|[1-9][0-9]{0,9}) unknown=(?P<unknown>0|[1-9][0-9]{0,9}) "
+    r"topology=(?P<topology>[a-z][a-z0-9-]*) "
+    r"domains=(?P<domains>0|[1-9][0-9]{0,9}) windows=(?P<windows>0|[1-9][0-9]{0,9}) "
+    r"drivers=(?P<drivers_ready>0|[1-9][0-9]{0,9})/(?P<drivers>0|[1-9][0-9]{0,9}) "
+    r"plans=(?P<plans>0|[1-9][0-9]{0,9}) nodes=(?P<nodes>0|[1-9][0-9]{0,9}) "
+    r"rings=(?P<rings>0|[1-9][0-9]{0,9}) active=(?P<active>0|[1-9][0-9]{0,9}) "
+    r"user=(?P<user>0|[1-9][0-9]{0,9}) "
+    r"nodebit_active=(?P<nodebit_active>0|[1-9][0-9]{0,9}) "
+    r"nodebit_risky=(?P<nodebit_risky>0|[1-9][0-9]{0,9})$"
+)
+ROOM_UINT32_MAX = (1 << 32) - 1
+ROOM_TOPOLOGIES = {
+    "uniform",
+    "segmented",
+    "numa-hinted",
+    "fabric-expandable",
+}
+
+KERNEL_ROOM_MANAGEMENT_PREFIX = "[ROOM] management hierarchy"
+KERNEL_ROOM_MANAGEMENT_RE = re.compile(
+    r"^\[ROOM\] management hierarchy selftest (?P<status>PASS) "
+    r"schema=(?P<schema>0|[1-9][0-9]{0,9}) "
+    r"struct_size=(?P<struct_size>0|[1-9][0-9]{0,9}) "
+    r"generation=(?P<generation>0|[1-9][0-9]{0,9}) "
+    r"cells=(?P<cells>0|[1-9][0-9]{0,9}) "
+    r"nodes=(?P<nodes>0|[1-9][0-9]{0,9}) "
+    r"bound_nodes=(?P<bound_nodes>0|[1-9][0-9]{0,9}) "
+    r"nodebits=(?P<nodebits>0|[1-9][0-9]{0,9}) "
+    r"bound_nodebits=(?P<bound_nodebits>0|[1-9][0-9]{0,9}) "
+    r"source_valid=(?P<source_valid>0|[1-9][0-9]{0,9}) "
+    r"generation_valid=(?P<generation_valid>0|[1-9][0-9]{0,9}) "
+    r"duplicate_rejected=(?P<duplicate_rejected>0|[1-9][0-9]{0,9}) "
+    r"orphan_rejected=(?P<orphan_rejected>0|[1-9][0-9]{0,9}) "
+    r"unknown_rejected=(?P<unknown_rejected>0|[1-9][0-9]{0,9}) "
+    r"stale_rejected=(?P<stale_rejected>0|[1-9][0-9]{0,9}) "
+    r"overflow_rejected=(?P<overflow_rejected>0|[1-9][0-9]{0,9}) "
+    r"tail_rejected=(?P<tail_rejected>0|[1-9][0-9]{0,9}) "
+    r"observation_only=(?P<observation_only>0|[1-9][0-9]{0,9}) "
+    r"management_only=(?P<management_only>0|[1-9][0-9]{0,9})$"
+)
+KERNEL_ROOM_MANAGEMENT_STRUCT_SIZE = 1024
+KERNEL_ROOM_MANAGEMENT_EXPECTED = {
+    "schema": 1,
+    "struct_size": KERNEL_ROOM_MANAGEMENT_STRUCT_SIZE,
+    "generation": 1,
+    "cells": 1,
+    "nodes": 1,
+    "bound_nodes": 1,
+    "nodebits": 2,
+    "bound_nodebits": 2,
+    "source_valid": 1,
+    "generation_valid": 1,
+    "duplicate_rejected": 1,
+    "orphan_rejected": 1,
+    "unknown_rejected": 1,
+    "stale_rejected": 1,
+    "overflow_rejected": 1,
+    "tail_rejected": 1,
+    "observation_only": 1,
+    "management_only": 1,
+}
+KERNEL_ROOM_MANAGEMENT_FIELDS = tuple(KERNEL_ROOM_MANAGEMENT_EXPECTED)
+
+KERNEL_ROOM_BINDING_PREFIX = "[ROOM] source binding"
+KERNEL_ROOM_BINDING_UINT_RE = r"(?:0|[1-9][0-9]{0,19})"
+KERNEL_ROOM_BINDING_RE = re.compile(
+    rf"^\[ROOM\] source binding selftest (?P<status>PASS) "
+    rf"schema=(?P<schema>{KERNEL_ROOM_BINDING_UINT_RE}) "
+    rf"struct_size=(?P<struct_size>{KERNEL_ROOM_BINDING_UINT_RE}) "
+    rf"binding_generation=(?P<binding_generation>{KERNEL_ROOM_BINDING_UINT_RE}) "
+    rf"bindings=(?P<bindings>{KERNEL_ROOM_BINDING_UINT_RE}) "
+    rf"capacity=(?P<capacity>{KERNEL_ROOM_BINDING_UINT_RE}) "
+    rf"canonical_namespace=(?P<canonical_namespace>{KERNEL_ROOM_BINDING_UINT_RE}) "
+    rf"canonical_id=(?P<canonical_id>{KERNEL_ROOM_BINDING_UINT_RE}) "
+    rf"canonical_kind=(?P<canonical_kind>{KERNEL_ROOM_BINDING_UINT_RE}) "
+    rf"canonical_generation=(?P<canonical_generation>{KERNEL_ROOM_BINDING_UINT_RE}) "
+    rf"parent_cell_id=(?P<parent_cell_id>{KERNEL_ROOM_BINDING_UINT_RE}) "
+    rf"parent_generation=(?P<parent_generation>{KERNEL_ROOM_BINDING_UINT_RE}) "
+    rf"source_namespace=(?P<source_namespace>{KERNEL_ROOM_BINDING_UINT_RE}) "
+    rf"source_id=(?P<source_id>{KERNEL_ROOM_BINDING_UINT_RE}) "
+    rf"source_instance=(?P<source_instance>{KERNEL_ROOM_BINDING_UINT_RE}) "
+    rf"source_generation=(?P<source_generation>{KERNEL_ROOM_BINDING_UINT_RE}) "
+    rf"source_kind=(?P<source_kind>{KERNEL_ROOM_BINDING_UINT_RE}) "
+    rf"source_role=(?P<source_role>{KERNEL_ROOM_BINDING_UINT_RE}) "
+    rf"kind_match=(?P<kind_match>{KERNEL_ROOM_BINDING_UINT_RE}) "
+    rf"role_match=(?P<role_match>{KERNEL_ROOM_BINDING_UINT_RE}) "
+    rf"producer_owned=(?P<producer_owned>{KERNEL_ROOM_BINDING_UINT_RE}) "
+    rf"copied_read=(?P<copied_read>{KERNEL_ROOM_BINDING_UINT_RE}) "
+    rf"missing_rejected=(?P<missing_rejected>{KERNEL_ROOM_BINDING_UINT_RE}) "
+    rf"duplicate_rejected=(?P<duplicate_rejected>{KERNEL_ROOM_BINDING_UINT_RE}) "
+    rf"orphan_rejected=(?P<orphan_rejected>{KERNEL_ROOM_BINDING_UINT_RE}) "
+    rf"namespace_rejected=(?P<namespace_rejected>{KERNEL_ROOM_BINDING_UINT_RE}) "
+    rf"kind_rejected=(?P<kind_rejected>{KERNEL_ROOM_BINDING_UINT_RE}) "
+    rf"role_rejected=(?P<role_rejected>{KERNEL_ROOM_BINDING_UINT_RE}) "
+    rf"instance_rejected=(?P<instance_rejected>{KERNEL_ROOM_BINDING_UINT_RE}) "
+    rf"zero_generation_rejected=(?P<zero_generation_rejected>{KERNEL_ROOM_BINDING_UINT_RE}) "
+    rf"generation_rollback_rejected=(?P<generation_rollback_rejected>{KERNEL_ROOM_BINDING_UINT_RE}) "
+    rf"stale_rejected=(?P<stale_rejected>{KERNEL_ROOM_BINDING_UINT_RE}) "
+    rf"init_order_rejected=(?P<init_order_rejected>{KERNEL_ROOM_BINDING_UINT_RE}) "
+    rf"schema_rejected=(?P<schema_rejected>{KERNEL_ROOM_BINDING_UINT_RE}) "
+    rf"overflow_rejected=(?P<overflow_rejected>{KERNEL_ROOM_BINDING_UINT_RE}) "
+    rf"tail_rejected=(?P<tail_rejected>{KERNEL_ROOM_BINDING_UINT_RE}) "
+    rf"source_valid=(?P<source_valid>{KERNEL_ROOM_BINDING_UINT_RE}) "
+    rf"generation_valid=(?P<generation_valid>{KERNEL_ROOM_BINDING_UINT_RE}) "
+    rf"binding_valid=(?P<binding_valid>{KERNEL_ROOM_BINDING_UINT_RE}) "
+    rf"observation_only=(?P<observation_only>{KERNEL_ROOM_BINDING_UINT_RE}) "
+    rf"management_only=(?P<management_only>{KERNEL_ROOM_BINDING_UINT_RE})$"
+)
+KERNEL_ROOM_BINDING_EXPECTED = {
+    "schema": 1,
+    "struct_size": 256,
+    "binding_generation": 1,
+    "bindings": 1,
+    "capacity": 2,
+    "canonical_namespace": 2,
+    "canonical_id": 101,
+    "canonical_kind": 1,
+    "canonical_generation": 1,
+    "parent_cell_id": 1,
+    "parent_generation": 1,
+    "source_namespace": 1,
+    "source_id": 1,
+    "source_instance": 1,
+    "source_generation": 1,
+    "source_kind": 1,
+    "source_role": 1,
+    "kind_match": 1,
+    "role_match": 1,
+    "producer_owned": 1,
+    "copied_read": 1,
+    "missing_rejected": 1,
+    "duplicate_rejected": 1,
+    "orphan_rejected": 1,
+    "namespace_rejected": 1,
+    "kind_rejected": 1,
+    "role_rejected": 1,
+    "instance_rejected": 1,
+    "zero_generation_rejected": 1,
+    "generation_rollback_rejected": 1,
+    "stale_rejected": 1,
+    "init_order_rejected": 1,
+    "schema_rejected": 1,
+    "overflow_rejected": 1,
+    "tail_rejected": 1,
+    "source_valid": 1,
+    "generation_valid": 1,
+    "binding_valid": 1,
+    "observation_only": 1,
+    "management_only": 1,
+}
+KERNEL_ROOM_BINDING_FIELDS = tuple(KERNEL_ROOM_BINDING_EXPECTED)
+
+
+def room_snapshot_semantics(
+    match: re.Match[str] | None,
+) -> dict[str, object]:
+    if match is None:
+        return {"parsed": False, "passed": False}
+    values = _int_groupdict(
+        match,
+        "ok", "degraded", "failed", "unknown", "domains", "windows",
+        "drivers_ready", "drivers", "plans", "nodes", "rings", "active",
+        "user", "nodebit_active", "nodebit_risky",
+    )
+    topology = match.group("topology")
+    stability = match.group("stability")
+    passed = (
+        all(value <= ROOM_UINT32_MAX for value in values.values())
+        and stability == "stable"
+        and values["ok"] > 0
+        and values["degraded"] == 0
+        and values["failed"] == 0
+        and topology in ROOM_TOPOLOGIES
+        and values["domains"] > 0
+        and values["drivers"] > 0
+        and values["drivers_ready"] <= values["drivers"]
+        and values["active"] <= values["rings"]
+        and values["user"] == 1
+        and values["nodebit_risky"] <= values["nodebit_active"]
+    )
+    return {
+        "parsed": True,
+        "passed": passed,
+        "stability": stability,
+        "topology": topology,
+        **values,
+    }
+ROOM_GATES_RE = re.compile(
+    r"\[ROOM\] gates total=(?P<total>\d+) stable_only=(?P<stable_only>\d+) completion=(?P<completion>\d+) shared=(?P<shared>\d+) risky_io=(?P<risky_io>\d+) observe=(?P<observe>\d+) control=(?P<control>\d+) data=(?P<data>\d+)"
+)
+RESOURCE_SELFTEST_RE = re.compile(
+    r"^\[RESOURCE\] ledger selftest (?P<status>\w+) "
+    r"schema=(?P<schema>\d+) kinds=(?P<kinds>\d+) units=(?P<units>\d+) "
+    r"entries=(?P<entries>\d+) capacity=(?P<capacity>\d+) "
+    r"source_flags=(?P<source_flags>\d+) "
+    r"limit_kinds=(?P<limit_kinds>\d+) used_kinds=(?P<used_kinds>\d+) "
+    r"high_water_kinds=(?P<high_water_kinds>\d+) "
+    r"denied_kinds=(?P<denied_kinds>\d+) "
+    r"owners_unattributed=(?P<owners_unattributed>\d+) "
+    r"observation_only=(?P<observation_only>\d+)$"
+)
+PRESSURE_SELFTEST_RE = re.compile(
+    r"^\[PRESSURE\] tracker selftest (?P<status>\w+) "
+    r"schema=(?P<schema>\d+) planes=(?P<planes>\d+) "
+    r"max_levels=(?P<max_levels>\d+) active_levels=(?P<active_levels>\d+) "
+    r"balanced=(?P<balanced>\d+) hotspot=(?P<hotspot>\d+) "
+    r"overlap=(?P<overlap>\d+) gate_mask=(?P<gate_mask>\d+) "
+    r"observation_only=(?P<observation_only>\d+)$"
+)
+
+
+def _sanitize_lines(log_text: str) -> list[str]:
+    lines = []
+    for raw_line in log_text.splitlines():
+        # Transport whitespace at the end is harmless, but leading whitespace
+        # is contract-significant: an indented or quoted diagnostic copy must
+        # not become an anchored evidence record during sanitization.
+        clean = ANSI_ESCAPE_RE.sub("", raw_line).rstrip()
+        if clean:
+            lines.append(clean)
+    return lines
+
+
+def _line_info(lines: list[str], predicate) -> dict[str, object]:
+    for index, line in enumerate(lines, start=1):
+        if predicate(line):
+            return {"seen": True, "line": index, "text": line}
+    return {"seen": False, "line": None, "text": None}
+
+
+def _search_match(lines: list[str], pattern: re.Pattern[str]):
+    for index, line in enumerate(lines, start=1):
+        match = pattern.search(line)
+        if match:
+            return index, line, match
+    return None, None, None
+
+
+def _int_groupdict(match: re.Match[str], *keys: str) -> dict[str, int]:
+    values: dict[str, int] = {}
+    for key in keys:
+        value = match.group(key)
+        if value is not None:
+            values[key] = int(value)
+    return values
+
+
+def _csv_int_group(match: re.Match[str], key: str) -> list[int]:
+    return [int(value) for value in match.group(key).split(",")]
+
+
+def _find_all_matches(lines: list[str], pattern: re.Pattern[str]) -> list[tuple[int, str, re.Match[str]]]:
+    matches: list[tuple[int, str, re.Match[str]]] = []
+    for index, line in enumerate(lines, start=1):
+        match = pattern.search(line)
+        if match:
+            matches.append((index, line, match))
+    return matches
+
+
+def _parse_controller_states(lines: list[str]) -> dict[str, object]:
+    controllers: dict[str, object] = {
+        "network": {"state": "unknown"},
+        "usb": {"state": "unknown"},
+        "storage": {"state": "unknown"},
+    }
+
+    selection_index, selection_line, selection_match = _search_match(lines, NETWORK_SELECTION_RE)
+    index, line, match = _search_match(lines, NETWORK_READY_RE)
+    if match:
+        controllers["network"] = {
+            "state": "ready",
+            "line": index,
+            "text": line,
+            "mmio": match.group("mmio"),
+            "io": match.group("io"),
+            "status": match.group("status"),
+            "link": match.group("link"),
+            "eeprom": int(match.group("eeprom")),
+        }
+    else:
+        info = _line_info(lines, lambda candidate: "[NET] No Intel E1000-compatible controller found" in candidate)
+        if info["seen"]:
+            controllers["network"] = {"state": "absent", **info}
+    if selection_match:
+        controllers["network"]["selection"] = {
+            "line": selection_index,
+            "text": selection_line,
+            "score": int(selection_match.group("score")),
+            "candidates": int(selection_match.group("candidates")),
+            "pci": selection_match.group("pci"),
+            "device": selection_match.group("device"),
+            "mmio_bars": int(selection_match.group("mmio_bars")),
+            "io_bars": int(selection_match.group("io_bars")),
+            "pcie": int(selection_match.group("pcie")),
+        }
+
+    selection_index, selection_line, selection_match = _search_match(lines, USB_SELECTION_RE)
+    index, line, match = _search_match(lines, USB_READY_RE)
+    if match:
+        controllers["usb"] = {
+            "state": "ready",
+            "line": index,
+            "text": line,
+            "controller": match.group("controller"),
+            "ready": int(match.group("ready")),
+            "vendor": match.group("vendor"),
+            "device": match.group("device"),
+            "pci": match.group("pci"),
+            "cmd": match.group("cmd"),
+            "mmio": match.group("mmio"),
+            "io": match.group("io"),
+        }
+    else:
+        info = _line_info(lines, lambda candidate: "[USB] No USB host controller found" in candidate)
+        if info["seen"]:
+            controllers["usb"] = {"state": "absent", **info}
+    if selection_match:
+        controllers["usb"]["selection"] = {
+            "line": selection_index,
+            "text": selection_line,
+            "controller": selection_match.group("controller"),
+            "score": int(selection_match.group("score")),
+            "candidates": int(selection_match.group("candidates")),
+            "pci": selection_match.group("pci"),
+            "mmio_bars": int(selection_match.group("mmio_bars")),
+            "io_bars": int(selection_match.group("io_bars")),
+            "pcie": int(selection_match.group("pcie")),
+        }
+
+    selection_index, selection_line, selection_match = _search_match(lines, STORAGE_SELECTION_RE)
+    index, line, match = _search_match(lines, STORAGE_READY_RE)
+    if match:
+        storage = {
+            "state": "ready",
+            "line": index,
+            "text": line,
+            "controller": match.group("controller"),
+            "ready": int(match.group("ready")),
+            "vendor": match.group("vendor"),
+            "device": match.group("device"),
+            "pci": match.group("pci"),
+            "cmd": match.group("cmd"),
+            "mmio": match.group("mmio"),
+            "io": match.group("io"),
+        }
+        channel_index, channel_line, channel_match = _search_match(lines, STORAGE_CHANNEL_RE)
+        if channel_match:
+            storage["channels"] = {
+                "line": channel_index,
+                "text": channel_line,
+                "primary": {
+                    "cmd": channel_match.group("primary_cmd"),
+                    "ctl": channel_match.group("primary_ctl"),
+                    "status": channel_match.group("primary_status"),
+                    "live": int(channel_match.group("primary_live")),
+                },
+                "secondary": {
+                    "cmd": channel_match.group("secondary_cmd"),
+                    "ctl": channel_match.group("secondary_ctl"),
+                    "status": channel_match.group("secondary_status"),
+                    "live": int(channel_match.group("secondary_live")),
+                },
+            }
+        controllers["storage"] = storage
+    else:
+        info = _line_info(lines, lambda candidate: "[STO] No storage controller found" in candidate)
+        if info["seen"]:
+            controllers["storage"] = {"state": "absent", **info}
+    if selection_match:
+        controllers["storage"]["selection"] = {
+            "line": selection_index,
+            "text": selection_line,
+            "controller": selection_match.group("controller"),
+            "score": int(selection_match.group("score")),
+            "candidates": int(selection_match.group("candidates")),
+            "pci": selection_match.group("pci"),
+            "mmio_bars": int(selection_match.group("mmio_bars")),
+            "io_bars": int(selection_match.group("io_bars")),
+            "pcie": int(selection_match.group("pcie")),
+        }
+
+    return controllers
+
+
+def parse_boot_log_text(
+    log_text: str,
+    smoke_profile: str,
+    serial_log_path: str | None = None,
+    cpu_profile: str = "default",
+) -> dict[str, object]:
+    lines = _sanitize_lines(log_text)
+    checkpoints = {
+        name: _line_info(lines, lambda candidate, needle=needle: needle in candidate)
+        for name, needle in CHECKPOINT_PATTERNS.items()
+    }
+
+    profile_expectation = CPU_PROFILE_EXPECTATIONS.get(cpu_profile)
+    feature_prefix_records = [
+        (index, line)
+        for index, line in enumerate(lines, start=1)
+        if line.startswith(CPU_SECURITY_PREFIX)
+    ]
+    feature_matches = _find_all_matches(lines, CPU_SECURITY_RE)
+    entry_prefix_records = [
+        (index, line)
+        for index, line in enumerate(lines, start=1)
+        if line.startswith(RING3_ENTRY_AC_HARDENING_PREFIX)
+    ]
+    entry_matches = _find_all_matches(lines, RING3_ENTRY_AC_HARDENING_RE)
+    room_prefix_records = [
+        (index, line)
+        for index, line in enumerate(lines, start=1)
+        if line.startswith(SECURITY_ROOM_PREFIX)
+    ]
+    room_matches = _find_all_matches(lines, ROOM_SNAPSHOT_RE)
+    management_prefix_records = [
+        (index, line)
+        for index, line in enumerate(lines, start=1)
+        if line.startswith(KERNEL_ROOM_MANAGEMENT_PREFIX)
+    ]
+    management_matches = _find_all_matches(
+        lines, KERNEL_ROOM_MANAGEMENT_RE
+    )
+    binding_prefix_records = [
+        (index, line)
+        for index, line in enumerate(lines, start=1)
+        if line.startswith(KERNEL_ROOM_BINDING_PREFIX)
+    ]
+    binding_matches = _find_all_matches(lines, KERNEL_ROOM_BINDING_RE)
+    security: dict[str, object] = {
+        "ready": False,
+        "requested_cpu_profile": cpu_profile,
+        "profile_known": profile_expectation is not None,
+        "profile_match": False,
+        "feature": {
+            "record_count": len(feature_prefix_records),
+            "fullmatch_count": len(feature_matches),
+            "duplicate": len(feature_prefix_records) > 1,
+        },
+        "entry_ac_hardening": {
+            "checkpoint_seen": checkpoints["ring3_entry_ac_hardening"]["seen"],
+            "record_count": len(entry_prefix_records),
+            "fullmatch_count": len(entry_matches),
+            "duplicate": len(entry_prefix_records) > 1,
+        },
+        "room": {
+            "record_count": len(room_prefix_records),
+            "fullmatch_count": len(room_matches),
+            "duplicate": len(room_prefix_records) > 1,
+            "semantic_ready": False,
+        },
+        "order": {
+            "expected": ["feature", "entry_ac_hardening", "room"],
+            "feature_line": None,
+            "entry_ac_hardening_line": None,
+            "room_line": None,
+            "passed": False,
+        },
+    }
+    feature_values: dict[str, int] | None = None
+    if len(feature_matches) == 1:
+        index, line, match = feature_matches[0]
+        feature_values = _int_groupdict(
+            match, "nx", "smep", "umip", "smap_supported", "smap"
+        )
+        security["feature"].update(  # type: ignore[union-attr]
+            {"line": index, "text": line, **feature_values}
+        )
+        security["order"]["feature_line"] = index  # type: ignore[index]
+    entry_values: dict[str, int] | None = None
+    entry_status: str | None = None
+    if len(entry_matches) == 1:
+        index, line, match = entry_matches[0]
+        entry_status = match.group("status")
+        entry_values = _int_groupdict(
+            match,
+            "schema", "smap_supported", "smap", "gate_active",
+            "common_entries", "common_saved_ac", "common_clac",
+            "common_fallback", "common_post_ac0", "int80_entries",
+            "int80_saved_ac", "int80_clac", "int80_fallback",
+            "int80_post_ac0", "gate_skips", "gate_mismatch",
+        )
+        security["entry_ac_hardening"].update(  # type: ignore[union-attr]
+            {"line": index, "text": line, "status": entry_status,
+             **entry_values}
+        )
+        security["order"]["entry_ac_hardening_line"] = index  # type: ignore[index]
+    if len(room_matches) == 1:
+        room_index, room_line, room_match = room_matches[0]
+        room_semantics = room_snapshot_semantics(room_match)
+        security["room"].update(  # type: ignore[union-attr]
+            {
+                "line": room_index,
+                "text": room_line,
+                "semantic_ready": room_semantics["passed"],
+                "semantics": room_semantics,
+            }
+        )
+        security["order"]["room_line"] = room_index  # type: ignore[index]
+    feature_line = security["order"]["feature_line"]  # type: ignore[index]
+    entry_line = security["order"]["entry_ac_hardening_line"]  # type: ignore[index]
+    room_line = security["order"]["room_line"]  # type: ignore[index]
+    order_passed = (
+        isinstance(feature_line, int)
+        and isinstance(entry_line, int)
+        and isinstance(room_line, int)
+        and feature_line < entry_line < room_line
+    )
+    security["order"]["passed"] = order_passed  # type: ignore[index]
+    if profile_expectation is not None:
+        profile_match = (
+            feature_values == profile_expectation["feature"]
+            and entry_values == profile_expectation["entry"]
+        )
+        security["profile_match"] = profile_match
+        security["ready"] = (
+            len(feature_prefix_records) == 1
+            and len(feature_matches) == 1
+            and len(entry_prefix_records) == 1
+            and len(entry_matches) == 1
+            and entry_status == "PASS"
+            and checkpoints["ring3_entry_ac_hardening"]["seen"]
+            and len(room_prefix_records) == 1
+            and len(room_matches) == 1
+            and bool(security["room"].get("semantic_ready"))  # type: ignore[union-attr]
+            and order_passed
+            and profile_match
+        )
+
+    selftest: dict[str, object] = {"metrics": {}}
+    index, line, match = _search_match(lines, SELFTEST_RESULT_RE)
+    if match:
+        selftest.update(
+            {
+                "line": index,
+                "text": line,
+                "status": match.group("status"),
+                "size_kib": int(match.group("size_kib")),
+                "iterations": int(match.group("iterations")),
+            }
+        )
+    for metric_index, metric_line, metric_match in _find_all_matches(lines, SELFTEST_METRIC_RE):
+        selftest["metrics"][metric_match.group("name")] = {
+            "line": metric_index,
+            "text": metric_line,
+            "cycles": int(metric_match.group("cycles")),
+            "cyc_per_kib": int(metric_match.group("cyc_per_kib")),
+        }
+
+    profile: dict[str, object] = {}
+    index, line, match = _search_match(lines, PROFILE_MAIN_RE)
+    if match:
+        profile.update(
+            {
+                "line": index,
+                "text": line,
+                "tsc_khz": int(match.group("tsc_khz")),
+                "invariant": int(match.group("invariant")),
+                "memcpy_mib_s": int(match.group("memcpy_mib_s")),
+                "tier": match.group("tier"),
+            }
+        )
+    cache_index, cache_line, cache_match = _search_match(lines, PROFILE_CACHE_RE)
+    if cache_match:
+        profile["cache"] = {
+            "line": cache_index,
+            "text": cache_line,
+            "kib": _int_groupdict(cache_match, "l1_kib", "l2_kib", "l3_kib"),
+            "latency_x100": _int_groupdict(
+                cache_match,
+                "l1_latency_x100",
+                "l2_latency_x100",
+                "l3_latency_x100",
+                "dram_latency_x100",
+            ),
+        }
+
+    device_summary: dict[str, object] | None = None
+    index, line, match = _search_match(lines, DEVICE_SUMMARY_RE)
+    if match:
+        device_summary = {"line": index, "text": line, **_int_groupdict(match, "pci", "matched", "eth", "wifi", "bt", "usb", "storage")}
+
+    health: dict[str, object] | None = None
+    index, line, match = _search_match(lines, HEALTH_RE)
+    if match:
+        health = {"line": index, "text": line, **_int_groupdict(match, "ok", "degraded", "failed", "unknown", "io_degraded", "req_fail", "autonomy", "risky_io")}
+        health["stability"] = match.group("stability")
+
+    slm: dict[str, object] = {
+        "ready": checkpoints["slm_orchestrator"]["seen"],
+        "seeded_plan_count": 0,
+        "seeded_labels": [],
+    }
+    index, line, match = _search_match(lines, SLM_MAIN_RE)
+    if match:
+        slm.update(
+            {
+                "line": index,
+                "text": line,
+                "mode": match.group("mode"),
+                "sco": int(match.group("sco")),
+                "workers": int(match.group("workers")),
+                "pipeline_qd": int(match.group("pipeline_qd")),
+                "depth": int(match.group("depth")),
+                "ring_used": int(match.group("ring_used")),
+                "ring_total": int(match.group("ring_total")),
+            }
+        )
+    index, line, match = _search_match(lines, SLM_RUNTIME_RE)
+    if match:
+        slm["runtime"] = {
+            "line": index,
+            "text": line,
+            "state": match.group("state"),
+            "status": int(match.group("status")),
+            "snapshot_abi": int(match.group("snapshot_abi")),
+            "nodebits": int(match.group("nodebits")),
+            "generation": int(match.group("generation")),
+        }
+    index, line, match = _search_match(lines, SLM_USER_AI_RE)
+    if match:
+        slm["user_ai_access"] = {
+            "line": index,
+            "text": line,
+            "score": int(match.group("score")),
+            "flags": match.group("flags"),
+            "direct_mmio": int(match.group("direct_mmio")),
+            "mediated": int(match.group("mediated")),
+            "clock_pct": {
+                "main": int(match.group("clock_main")),
+                "worker": int(match.group("clock_worker")),
+                "io": int(match.group("clock_io")),
+                "memory": int(match.group("clock_memory")),
+                "guardian": int(match.group("clock_guardian")),
+                "reserve": int(match.group("clock_reserve")),
+            },
+            "slice_us": int(match.group("slice_us")),
+            "poll_us": int(match.group("poll_us")),
+        }
+    seeded_labels: list[str] = []
+    for line_text in lines:
+        seeded_match = SLM_SEEDED_RE.search(line_text)
+        if seeded_match:
+            seeded_labels.append(seeded_match.group("label"))
+    slm["seeded_plan_count"] = len(seeded_labels)
+    slm["seeded_labels"] = seeded_labels
+
+    user_mode: dict[str, object] = {"ready": checkpoints["ring3_scaffold"]["seen"]}
+    index, line, match = _search_match(lines, USER_SCAFFOLD_RE)
+    if match:
+        user_mode.update(
+            {
+                "line": index,
+                "text": line,
+                "ready": int(match.group("ready")),
+                "tr": match.group("tr"),
+                "user_cs": match.group("user_cs"),
+                "user_ds": match.group("user_ds"),
+                "rsp0": match.group("rsp0"),
+                "gdt_base": match.group("gdt_base"),
+                "gdt_limit": int(match.group("gdt_limit")),
+            }
+        )
+
+    user_access: dict[str, object] = {"ready": checkpoints["user_access"]["seen"]}
+    index, line, match = _search_match(lines, USER_ACCESS_RE)
+    if match:
+        user_access.update(
+            {
+                "line": index,
+                "text": line,
+                "status": match.group("status"),
+                "structural": int(match.group("structural")),
+                "copy": int(match.group("copy")),
+                "zero_copy": int(match.group("zero_copy")),
+                "string": int(match.group("string") or 0),
+            }
+        )
+
+    process_stack: dict[str, object] = {
+        "ready": checkpoints["bootstrap_process"]["seen"] and
+                 checkpoints["bootstrap_process_stack"]["seen"]
+    }
+    index, line, match = _search_match(lines, PROCESS_OWNERSHIP_RE)
+    if match:
+        process_stack["ownership"] = {
+            "line": index,
+            "text": line,
+            "status": match.group("status"),
+            **_int_groupdict(
+                match, "slots", "owned", "stack_bytes", "unique_cr3",
+                "unique_backing", "unique_stack"
+            ),
+        }
+    index, line, match = _search_match(lines, PROCESS_STACK_RE)
+    if match:
+        process_stack["execution"] = {
+            "line": index,
+            "text": line,
+            "status": match.group("status"),
+            **_int_groupdict(
+                match, "pid", "slot", "process_bound", "kstack_bytes",
+                "rsp0_changed", "rsp0_published", "int80_entries",
+                "all_int80_entries_in_stack", "rsp0_restored",
+                "kstack_floor_canary"
+            ),
+        }
+
+    pair_checkpoint_seen = checkpoints["bootstrap_process_pair"]["seen"]
+    process_pair: dict[str, object] = {
+        "ready": False,
+        "checkpoint_seen": pair_checkpoint_seen,
+    }
+    index, line, match = _search_match(lines, PROCESS_PAIR_RE)
+    if match:
+        process_pair.update(
+            {
+                "ready": (
+                    pair_checkpoint_seen and match.group("status") == "PASS"
+                ),
+                "line": index,
+                "text": line,
+                "status": match.group("status"),
+                "order": match.group("order"),
+                **_int_groupdict(
+                    match, "runs", "pid_a", "slot_a", "pid_b", "slot_b",
+                    "distinct_pid", "distinct_slot", "distinct_cr3",
+                    "distinct_backing", "distinct_stack", "int80_a",
+                    "int80_b", "between_clean", "current_pid", "last_pid",
+                    "rsp0_publishes", "rsp0_restores",
+                    "tss_rsp0_baseline", "both_restored"
+                ),
+            }
+        )
+
+    snapshot_checkpoint_seen = checkpoints["process_trap_snapshot"]["seen"]
+    snapshot_prefix_records = [
+        (index, line)
+        for index, line in enumerate(lines, start=1)
+        if line.startswith(PROCESS_TRAP_SNAPSHOT_PREFIX)
+    ]
+    snapshot_matches = _find_all_matches(lines, PROCESS_TRAP_SNAPSHOT_RE)
+    process_trap_snapshot: dict[str, object] = {
+        "ready": False,
+        "checkpoint_seen": snapshot_checkpoint_seen,
+        "record_count": len(snapshot_prefix_records),
+        "fullmatch_count": len(snapshot_matches),
+        "duplicate": len(snapshot_prefix_records) > 1,
+    }
+    if len(snapshot_matches) == 1:
+        index, line, match = snapshot_matches[0]
+        values = _int_groupdict(
+            match, "schema", "captures", "pid_a", "slot_a", "seq_a",
+            "valid_a", "owner_a", "frame_a", "cr3_a", "rsp0_a",
+            "pid_b", "slot_b", "seq_b", "valid_b", "owner_b",
+            "frame_b", "cr3_b", "rsp0_b", "distinct_storage",
+            "current_pid", "stale_owner", "resume_ready"
+        )
+        expected = {
+            "schema": 1, "captures": 2,
+            "pid_a": 1, "slot_a": 0, "seq_a": 1,
+            "valid_a": 1, "owner_a": 1, "frame_a": 1,
+            "cr3_a": 1, "rsp0_a": 1,
+            "pid_b": 2, "slot_b": 1, "seq_b": 2,
+            "valid_b": 1, "owner_b": 1, "frame_b": 1,
+            "cr3_b": 1, "rsp0_b": 1, "distinct_storage": 1,
+            "current_pid": 0, "stale_owner": 0, "resume_ready": 0,
+        }
+        process_trap_snapshot.update(
+            {
+                "ready": (
+                    snapshot_checkpoint_seen and
+                    len(snapshot_prefix_records) == 1 and
+                    len(snapshot_matches) == 1 and
+                    match.group("status") == "PASS" and
+                    values == expected
+                ),
+                "line": index,
+                "text": line,
+                "status": match.group("status"),
+                **values,
+            }
+        )
+
+    journal_checkpoint_seen = checkpoints["process_event_journal"]["seen"]
+    journal_prefix_records = [
+        (index, line)
+        for index, line in enumerate(lines, start=1)
+        if line.startswith(PROCESS_EVENT_JOURNAL_PREFIX)
+    ]
+    journal_matches = _find_all_matches(lines, PROCESS_EVENT_JOURNAL_RE)
+    process_event_journal: dict[str, object] = {
+        "ready": False,
+        "checkpoint_seen": journal_checkpoint_seen,
+        "record_count": len(journal_prefix_records),
+        "fullmatch_count": len(journal_matches),
+        "duplicate": len(journal_prefix_records) > 1,
+        "events": [],
+    }
+    if len(journal_matches) == 1:
+        index, line, match = journal_matches[0]
+        scalar_values = _int_groupdict(
+            match,
+            "schema", "event_count", "lifecycle", "captures",
+            "capture_seq_separate", "current_pid", "stale_owner",
+            "dropped", "overflow", "evidence_only", "switch_events",
+            "resume_ready",
+        )
+        vector_keys = (
+            "seqs", "kinds", "reasons", "from_pids", "to_pids",
+            "slots", "generations", "capture_seqs", "owner_ok",
+            "cr3_ok", "rsp0_ok", "if0", "snapshot_refs", "outcomes",
+        )
+        vectors = {
+            key: _csv_int_group(match, key)
+            for key in vector_keys
+        }
+        vector_lengths = {
+            key: len(values)
+            for key, values in vectors.items()
+        }
+        event_count = scalar_values["event_count"]
+        expected_event_count = 6
+        lengths_match = event_count == expected_event_count and all(
+            length == expected_event_count
+            for length in vector_lengths.values()
+        )
+        ordered = (
+            event_count == expected_event_count and
+            vectors["seqs"] == [1, 2, 3, 4, 5, 6]
+        )
+        unknown_kind_ids = sorted(set(vectors["kinds"]) - {1, 2, 3})
+        unknown_reason_ids = sorted(set(vectors["reasons"]) - {1, 2, 3})
+        unknown_outcome_ids = sorted(set(vectors["outcomes"]) - {1})
+        event_rows = [
+            {
+                "sequence": vectors["seqs"][event_index],
+                "kind": vectors["kinds"][event_index],
+                "reason": vectors["reasons"][event_index],
+                "from_pid": vectors["from_pids"][event_index],
+                "to_pid": vectors["to_pids"][event_index],
+                "slot": vectors["slots"][event_index],
+                "generation": vectors["generations"][event_index],
+                "capture_sequence": vectors["capture_seqs"][event_index],
+                "owner_ok": vectors["owner_ok"][event_index],
+                "cr3_ok": vectors["cr3_ok"][event_index],
+                "rsp0_ok": vectors["rsp0_ok"][event_index],
+                "if0": vectors["if0"][event_index],
+                "snapshot_ref": vectors["snapshot_refs"][event_index],
+                "outcome": vectors["outcomes"][event_index],
+            }
+            for event_index in range(
+                min(expected_event_count, min(vector_lengths.values()))
+            )
+        ]
+        expected_scalars = {
+            "schema": 1,
+            "event_count": 6,
+            "lifecycle": 4,
+            "captures": 2,
+            "capture_seq_separate": 1,
+            "current_pid": 0,
+            "stale_owner": 0,
+            "dropped": 0,
+            "overflow": 0,
+            "evidence_only": 1,
+            "switch_events": 0,
+            "resume_ready": 0,
+        }
+        expected_vectors = {
+            "seqs": [1, 2, 3, 4, 5, 6],
+            "kinds": [1, 2, 3, 1, 2, 3],
+            "reasons": [1, 2, 3, 1, 2, 3],
+            "from_pids": [0, 1, 1, 0, 2, 2],
+            "to_pids": [1, 1, 0, 2, 2, 0],
+            "slots": [0, 0, 0, 1, 1, 1],
+            "generations": [1, 1, 1, 1, 1, 1],
+            "capture_seqs": [0, 1, 1, 0, 2, 2],
+            "owner_ok": [1, 1, 1, 1, 1, 1],
+            "cr3_ok": [1, 1, 1, 1, 1, 1],
+            "rsp0_ok": [1, 1, 1, 1, 1, 1],
+            "if0": [1, 1, 1, 1, 1, 1],
+            "snapshot_refs": [0, 1, 1, 0, 1, 1],
+            "outcomes": [1, 1, 1, 1, 1, 1],
+        }
+        process_event_journal.update(
+            {
+                "ready": (
+                    journal_checkpoint_seen and
+                    len(journal_prefix_records) == 1 and
+                    len(journal_matches) == 1 and
+                    match.group("status") == "PASS" and
+                    scalar_values == expected_scalars and
+                    vectors == expected_vectors and
+                    lengths_match and ordered and
+                    not unknown_kind_ids and
+                    not unknown_reason_ids and
+                    not unknown_outcome_ids
+                ),
+                "line": index,
+                "text": line,
+                "status": match.group("status"),
+                "ordered": ordered,
+                "lengths_match": lengths_match,
+                "vector_lengths": vector_lengths,
+                "unknown_kind_ids": unknown_kind_ids,
+                "unknown_reason_ids": unknown_reason_ids,
+                "unknown_outcome_ids": unknown_outcome_ids,
+                "events": event_rows,
+                **scalar_values,
+                **vectors,
+            }
+        )
+
+    kernel_room_management: dict[str, object] = {
+        "ready": False,
+        "checkpoint_seen": checkpoints["kernel_room_management"]["seen"],
+        "record_count": len(management_prefix_records),
+        "fullmatch_count": len(management_matches),
+        "duplicate": len(management_prefix_records) > 1,
+        "order": {
+            "expected": [
+                "ring3_entry_ac_hardening",
+                "kernel_room_management",
+                "kernel_room_binding",
+                "kernel_room",
+            ],
+            "ring3_entry_ac_hardening_line": (
+                entry_matches[0][0] if len(entry_matches) == 1 else None
+            ),
+            "kernel_room_management_line": (
+                management_matches[0][0]
+                if len(management_matches) == 1
+                else None
+            ),
+            "kernel_room_binding_line": (
+                binding_matches[0][0]
+                if len(binding_matches) == 1
+                else None
+            ),
+            "kernel_room_line": (
+                room_matches[0][0] if len(room_matches) == 1 else None
+            ),
+            "passed": False,
+        },
+    }
+    if len(management_matches) == 1:
+        index, line, match = management_matches[0]
+        fields = _int_groupdict(
+            match, *KERNEL_ROOM_MANAGEMENT_FIELDS
+        )
+        entry_line = kernel_room_management["order"][  # type: ignore[index]
+            "ring3_entry_ac_hardening_line"
+        ]
+        room_line = kernel_room_management["order"][  # type: ignore[index]
+            "kernel_room_line"
+        ]
+        binding_line = kernel_room_management["order"][  # type: ignore[index]
+            "kernel_room_binding_line"
+        ]
+        order_passed = (
+            isinstance(entry_line, int)
+            and isinstance(binding_line, int)
+            and isinstance(room_line, int)
+            and entry_line < index < binding_line < room_line
+        )
+        semantic_ready = (
+            match.group("status") == "PASS"
+            and fields == KERNEL_ROOM_MANAGEMENT_EXPECTED
+        )
+        kernel_room_management["order"]["passed"] = order_passed  # type: ignore[index]
+        kernel_room_management.update(
+            {
+                "ready": (
+                    len(management_prefix_records) == 1
+                    and semantic_ready
+                    and order_passed
+                ),
+                "line": index,
+                "text": line,
+                "status": match.group("status"),
+                "semantic_ready": semantic_ready,
+                **fields,
+            }
+        )
+
+    management_ready = bool(kernel_room_management.get("ready"))
+    kernel_room_binding: dict[str, object] = {
+        "ready": False,
+        "checkpoint_seen": checkpoints["kernel_room_binding"]["seen"],
+        "record_count": len(binding_prefix_records),
+        "fullmatch_count": len(binding_matches),
+        "duplicate": len(binding_prefix_records) > 1,
+        "order": {
+            "expected": [
+                "ring3_entry_ac_hardening",
+                "kernel_room_management",
+                "kernel_room_binding",
+                "kernel_room",
+            ],
+            "ring3_entry_ac_hardening_line": (
+                entry_matches[0][0] if len(entry_matches) == 1 else None
+            ),
+            "kernel_room_management_line": (
+                management_matches[0][0]
+                if len(management_matches) == 1
+                else None
+            ),
+            "kernel_room_binding_line": (
+                binding_matches[0][0]
+                if len(binding_matches) == 1
+                else None
+            ),
+            "kernel_room_line": (
+                room_matches[0][0] if len(room_matches) == 1 else None
+            ),
+            "passed": False,
+        },
+    }
+    if len(binding_matches) == 1:
+        index, line, match = binding_matches[0]
+        fields = _int_groupdict(match, *KERNEL_ROOM_BINDING_FIELDS)
+        entry_line = kernel_room_binding["order"][  # type: ignore[index]
+            "ring3_entry_ac_hardening_line"
+        ]
+        management_line = kernel_room_binding["order"][  # type: ignore[index]
+            "kernel_room_management_line"
+        ]
+        room_line = kernel_room_binding["order"][  # type: ignore[index]
+            "kernel_room_line"
+        ]
+        order_passed = (
+            isinstance(entry_line, int)
+            and isinstance(management_line, int)
+            and isinstance(room_line, int)
+            and entry_line < management_line < index < room_line
+        )
+        semantic_ready = (
+            match.group("status") == "PASS"
+            and fields == KERNEL_ROOM_BINDING_EXPECTED
+        )
+        kernel_room_binding["order"]["passed"] = order_passed  # type: ignore[index]
+        kernel_room_binding.update(
+            {
+                "ready": (
+                    len(binding_prefix_records) == 1
+                    and management_ready
+                    and semantic_ready
+                    and order_passed
+                ),
+                "line": index,
+                "text": line,
+                "status": match.group("status"),
+                "semantic_ready": semantic_ready,
+                **fields,
+            }
+        )
+
+    kernel_room: dict[str, object] = {
+        "ready": False,
+        "record_count": len(room_prefix_records),
+        "fullmatch_count": len(room_matches),
+        "duplicate": len(room_prefix_records) > 1,
+    }
+    if len(room_matches) == 1:
+        index, line, match = room_matches[0]
+        semantics = room_snapshot_semantics(match)
+        kernel_room.update(
+            {
+                "ready": (
+                    len(room_prefix_records) == 1
+                    and bool(semantics["passed"])
+                ),
+                "line": index,
+                "text": line,
+                "stability": match.group("stability"),
+                "topology": match.group("topology"),
+                "semantics": semantics,
+                **_int_groupdict(
+                    match,
+                    "ok",
+                    "degraded",
+                    "failed",
+                    "unknown",
+                    "domains",
+                    "windows",
+                    "drivers_ready",
+                    "drivers",
+                    "plans",
+                    "nodes",
+                    "rings",
+                    "active",
+                    "user",
+                    "nodebit_active",
+                    "nodebit_risky",
+                ),
+            }
+        )
+    gate_index, gate_line, gate_match = _search_match(lines, ROOM_GATES_RE)
+    if gate_match:
+        kernel_room["gates"] = {
+            "line": gate_index,
+            "text": gate_line,
+            **_int_groupdict(
+                gate_match,
+                "total",
+                "stable_only",
+                "completion",
+                "shared",
+                "risky_io",
+                "observe",
+                "control",
+                "data",
+            ),
+        }
+
+    shell_info: dict[str, object] = {
+        "started": checkpoints["shell"]["seen"],
+        "boot_complete": checkpoints["boot_complete"]["seen"],
+    }
+
+    nodebit_info: dict[str, object] = {
+        "ready": checkpoints["nodebit"]["seen"],
+    }
+
+    resource: dict[str, object] = {
+        "ready": False,
+        "checkpoint_seen": checkpoints["resource_ledger"]["seen"],
+    }
+    index, line, match = _search_match(lines, RESOURCE_SELFTEST_RE)
+    if match:
+        fields = _int_groupdict(
+            match,
+            "schema",
+            "kinds",
+            "units",
+            "entries",
+            "capacity",
+            "source_flags",
+            "limit_kinds",
+            "used_kinds",
+            "high_water_kinds",
+            "denied_kinds",
+            "owners_unattributed",
+            "observation_only",
+        )
+        resource.update(
+            {
+                "line": index,
+                "text": line,
+                "status": match.group("status"),
+                **fields,
+            }
+        )
+        resource["ready"] = (
+            resource["checkpoint_seen"]
+            and match.group("status") == "PASS"
+            and fields == {
+                "schema": 1,
+                "kinds": 5,
+                "units": 2,
+                "entries": 5,
+                "capacity": 8,
+                "source_flags": 31,
+                "limit_kinds": 5,
+                "used_kinds": 5,
+                "high_water_kinds": 1,
+                "denied_kinds": 0,
+                "owners_unattributed": 1,
+                "observation_only": 1,
+            }
+        )
+
+    pressure: dict[str, object] = {
+        "ready": False,
+        "checkpoint_seen": checkpoints["pressure_tracker"]["seen"],
+    }
+    index, line, match = _search_match(lines, PRESSURE_SELFTEST_RE)
+    if match:
+        fields = _int_groupdict(
+            match,
+            "schema",
+            "planes",
+            "max_levels",
+            "active_levels",
+            "balanced",
+            "hotspot",
+            "overlap",
+            "gate_mask",
+            "observation_only",
+        )
+        pressure.update(
+            {
+                "line": index,
+                "text": line,
+                "status": match.group("status"),
+                **fields,
+            }
+        )
+        pressure["ready"] = (
+            pressure["checkpoint_seen"]
+            and match.group("status") == "PASS"
+            and fields == {
+                "schema": 1,
+                "planes": 3,
+                "max_levels": 4,
+                "active_levels": 2,
+                "balanced": 1,
+                "hotspot": 1,
+                "overlap": 1,
+                "gate_mask": 1,
+                "observation_only": 1,
+            }
+        )
+
+    summary = {
+        "smoke_profile": smoke_profile,
+        "cpu_profile": cpu_profile,
+        "serial_log": serial_log_path,
+        "line_count": len(lines),
+        "checkpoints": checkpoints,
+        "selftest": selftest,
+        "profile": profile,
+        "device_summary": device_summary,
+        "health": health,
+        "controllers": _parse_controller_states(lines),
+        "slm": slm,
+        "user_mode": user_mode,
+        "user_access": user_access,
+        "process_stack": process_stack,
+        "process_pair": process_pair,
+        "process_trap_snapshot": process_trap_snapshot,
+        "process_event_journal": process_event_journal,
+        "security": security,
+        "kernel_room_management": kernel_room_management,
+        "kernel_room_binding": kernel_room_binding,
+        "kernel_room": kernel_room,
+        "shell": shell_info,
+        "nodebit": nodebit_info,
+        "resource": resource,
+        "pressure": pressure,
+    }
+    return summary
+
+
+def parse_boot_log_file(
+    path: Path,
+    smoke_profile: str,
+    cpu_profile: str = "default",
+) -> dict[str, object]:
+    text = path.read_text(encoding="utf-8", errors="replace")
+    return parse_boot_log_text(text, smoke_profile, str(path), cpu_profile)
+
+
+def boot_summary_path(
+    target: str,
+    smoke_profile: str,
+    cpu_profile: str = "default",
+) -> Path:
+    suffix = "" if cpu_profile == "default" else f"-{cpu_profile}"
+    return BUILD_DIR / "boot-summary" / f"{target}-{smoke_profile}{suffix}.json"
+
+
+def write_boot_summary(
+    summary: dict[str, object],
+    target: str,
+    smoke_profile: str,
+    cpu_profile: str = "default",
+) -> Path:
+    output_path = boot_summary_path(target, smoke_profile, cpu_profile)
+    ensure_dir(output_path.parent)
+    output_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
+    return output_path

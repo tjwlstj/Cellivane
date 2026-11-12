@@ -1,0 +1,242 @@
+<!-- Cellivane public migration, 2026-11-12 -->
+> 기존 구현·실행 기록은 가져온 source 시점의 범위다. 새 공개판 목적·전역 큐·개발·출처는 root README와 docs/PRODUCT.md, docs/ROADMAP.md, docs/DEVELOPMENT.md, docs/provenance/MIGRATION.md를 따른다. 이 안내는 새 runtime 수락을 뜻하지 않는다.
+
+# Cellivane · 셀리베인 프로젝트 가이드 (도메인 맵 정본)
+
+이 문서는 저장소를 **하나의 큰 트리가 아니라 7개의 독립 도메인**으로 보고 관리하기 위한
+도메인 맵 정본이다. "이 코드는 어디에 두나?", "무엇이 무엇에 의존해도 되나?"를 여기서 정한다.
+작업 요청 분류, 정본 선택, 검증과 문서 관리 절차는
+[통합 작업 진입 가이드](docs/meta/integrated_work_guide_ko.md)를 따른다.
+
+제품 개요/기능 설명은 [README.md](README.md), 세부 설계는 [docs/README.md](docs/README.md),
+저장소 AI 작업·게시 규칙은 [AGENTS.md](AGENTS.md)와 [.agents/README.md](.agents/README.md),
+현재 빌드·구현 불변식은 [CLAUDE.md](CLAUDE.md)를 본다. 이 문서는 전역 작업 우선순위나
+세부 구현 성숙도를 단독으로 결정하지 않는다.
+
+제품 목적은 **AI가 자신의 작업 공간과 상태를 이해하고 로컬에서 효율적으로 활동하며
+사용자와 지속적으로 상호작용하는 운영 환경**이다.
+[제품 목적 정본](docs/meta/aios_product_direction_ko.md)이 경험과 성공 기준을 소유한다.
+제품 표시 이름은 Cellivane·셀리베인이며 AIOS는 기존 기술·호환 이름이다.
+[제품 이름 정본](docs/meta/product_identity_and_naming_ko.md)이 Chesi·Kernel Room·Runtime·Console·Engine의 역할과 영한 표기를 소유한다.
+
+**Room → Cell → Node → NodeBit**는 이 목적을 위한 관리 구조이며 디렉터리 트리와
+구별한다. ID·부모 관계·세대·source 결속은 [관리 모델](docs/kernel-room/kernel_room_management_model_ko.md)을
+따른다. K1/native K2-a의 bounded proof와 H1 host-only replay는 `CURRENT`, 전체
+관리 topology와 bounded hosted MAIN·Cell 수명은 `PARTIAL`이다. 버전·실행 ID·검증
+수는 해당 계약/운영 가이드에서 관리한다.
+
+문서 내용 검토: 2026-10-09, Cellivane 표시 이름·격리 브릿지의 hosted/experimental/tools 책임과 actual/PARTIAL 경계 연결. P1a·2026-10-08 P0/구조 후속과 아래 v0.10은 보존한 기준선의 계약·실행 증거다.
+보존된 v0.8 실제 소비의 수정 검증기 재생은 PASS이며, v0.10의 실제 모델 TaskSmoke는 한정 흐름에서 PASS다. source 39개 운영 이미지 acceptance는 미완료다.
+재검토 조건과 세부 근거는 [문서 신선도 원장](docs/meta/document_freshness_registry_ko.md)을 따른다.
+
+보존한 v0.10 기준선은 환경 문맥 전달과 UUID 질문의 접수·조회·결과·취소를 제공하는 `PARTIAL`이다.
+CLI 0.10.0/session 10/source 35개, MAIN protocol/run 6/source 28개, receipt 3과
+전체 hosted Python source 39개의 계약은 [환경 문맥 가이드](docs/os/aios_space_context_guide_ko.md)가 소유한다.
+제품 runtime은 `hosted/`, 한 CLI의 Task smoke 진행과 독립 시나리오 검증은 `tools/` 책임이다.
+보존된 v0.9 개발·source 사본·기존 beta·운영 이미지의 실행 기록과 이 체크포인트의 검증 범위를 구분한다.
+이전 대화·범용 작업 수정·CLI 소실/재부팅 뒤 자동 재개는 아직 없다. 기존 source 35개 이미지와
+과거 실제 모델의 PASS를 새 개발 소스에 승계하지 않으며 source 39개 운영 이미지는 아직 생성·검증하지 않았다.
+
+2026-10-08의 [SERVE-P0](docs/os/aios_serving_design_ko.md)는 `hosted/linux/aios_engines/`에
+legacy 직렬화/응답 검증과 messages fixture·최소 capability 계약을 둔다(개발 `PARTIAL`).
+`RequestExecution.for_messages(...)`는 CLI/RPC의 새 엔진 선택 기능 없이 실제 단일
+writer·shared Task state·bounded worker를 검증하는 진입이다. canonical MAIN 관리
+binding을 fixture에 상속하지 않는다. 독립 verifier와 fixture/tests는 `tools/hosted/`가
+소유한다. P0 당시 source 계약은 CLI 0.11.0/session 11/source 39, MAIN protocol 6/run 7/source
+32, backend protocol 1/run 2/source 19, 전체 hosted Python 43이며 legacy receipt 3은 유지한다.
+이전 v0.10/source39 이미지 기록과 새 source43 후보 manifest를 구별하고, 새 이미지
+실행·실제 두 엔진·streaming은 아직 검증하지 않았다. 심핵·고권한·설치 장기 목표와
+이번 선택 조각은 [전역 큐](docs/meta/minimal_io_and_maturity_workflow_ko.md#serve-p1a-current)를 따른다.
+
+[구조 비교 후속](docs/os/aios_architecture_comparison_20261008_ko.md)은 hosted 내부의
+prepared 검증·명시적 admission과 공통 Task lifetime 책임 분리를 선택했다(`PARTIAL`).
+구현은 기존 runtime2파일·부정 tests3에 한정하며 schema·source 파일 목록/count는 유지한다.
+새 source의 회귀·독립 fixture 판독은 PASS이며 상세 로그는 비교 기록이 소유한다. upstream 코드 import0,
+native·KernelRoom 의미와 ABI는 유지하며 외부 설계 참조를 구현·보안·성능 proof로 승격하지 않는다.
+
+보존한 [SERVE-P1a](docs/os/aios_serving_design_ko.md#serve-p1a-current)는 `ollama_chat.py`의
+어댑터·closed prepared·bounded HTTP worker와 `RequestExecution.for_ollama(...)` 내부 입구를
+개발한다. 공통 Task writer/state는 `hosted/`, HTTP fixture·독립 판독·source closure는
+`tools/` 책임이다. optional lazy dependency로 public legacy/fixture 실행 family32/39/19와
+CLI11·MAIN run7·backend run2를 유지하며 P1a 전용 bundle33과 전체 candidate44를 구분한다.
+bounded 개발은 `PARTIAL`이며 좁은 회귀·4종 HTTP Task의 독립 판독은 PASS다. 전체 회귀·source별
+로그는 서빙§9가 소유한다. 실제 서버·이미지·공개 CLI 선택이나 관리 binding/stop 권한을 만들지 않는다.
+
+현재 [Seed 소형 모델 서빙](docs/os/cellivane_seed_engine_ko.md)은 `hosted/experimental/cellivane_seed`의
+원본 scheduler·cache·동일 요청 합류와 `tools/hosted/cellivane_seed_lab.py`의 소유 CPU 실험을 분리한다(`SUPPORTING`/`PARTIAL`).
+외부 llamafile가 token 계산을 수행하며 실제 CPU/cache·기존 bridge 호환은 한정 PASS다. 최종 검사는 정본 소유이며 public/native source family는 유지한다.
+
+보존한 [다중 엔진 브릿지 실험](docs/os/cellivane_bridge_experiment_ko.md)은
+`hosted/experimental/cellivane_bridge`에 독립 runtime·CLI·loopback adapter·단일 writer를 두고,
+`tools/hosted/cellivane_bridge_lab.py`가 D: 자산·소유 Windows Job을 관리한다.
+독립 journal verifier와 fixture는 `tools/hosted/` 책임이다. 제품 runtime은 tools를 import하지 않는다.
+실제 llamafile/Ollama의 Qwen3-0.6B 실행은 `PARTIAL` 실험 증거이며 품질 개선은 미관측이다.
+Strata의 작은 dense 모델 미지원·실제 qualification 미구현으로 기준 Strata 경로는 차단한다.
+`hosted/linux`의 기존 family·candidate44·공개 MAIN/이미지와 이 별도 package를 합치지 않는다.
+
+자기 참조·행동 피드백의 장기 실증 절차는 [연구 운영 가이드](docs/meta/self_reference_research_workflow_ko.md),
+다섯 단계의 전체 수락 기준과 순서는 [전역 큐](docs/meta/minimal_io_and_maturity_workflow_ko.md#self-reference-acceptance)가 소유한다.
+첫 Windows CPU private sandbox pilot은 `RESEARCH`이며 개발 구현은 `PARTIAL`이다.
+첫 pilot의 FAIL/NOT_EVALUABLE과 이후 normal 3 episode calibration의 실행 무결성
+PASS·모델 목표 완료 0을 분리해 보존한다. 공개 예측 미확정 처리·고정 grammar와
+기존 ON/OFF NOT_EVALUABLE도 각 source의 계약·증거로 보존한다. 새 schema v2는 고정
+SYSTEM 두 profile의 normal·relational 비교, query invocation 최대 24회와 독립 검증을
+제공한다. 실제 2 episode·24 HTTP 200·독립 감사 PASS지만 두 조건 모두 목표 0이며
+후보 개선은 관측되지 않았다. 2026-09-24에 대조한 후속 고정 상태 readout은 관측 블록
+위치만 바꾼 두 조건의 새 6응답·실행 무결성·독립 감사 PASS지만 행동·귀속 개선은 미관측이다.
+이는 실제 효과를 실행하지 않는 `STATIC_ONLY`이며 현재 Windows 검사는 238개 중
+234 PASS·권한 조건 4 skip이다. 이 readout의 beta `5bd35e81` CI 7/7과 기존 GPT
+연구 대화의 제한된 검토를 마쳤다. 연구 증거 E0를 첫 UUID Task가 보고하고 driver가
+고정 파일을 저장·재읽어 E1을 두 번째 Task에 전달하는 독립 경로는 `tools/hosted/`에
+준비됐다(`PREPARED`). 실제 QEMU run01은 입력 예산 초과로 Task 0개, run02는 첫
+UUID Task 접수 후 답변 미완료로 FAIL이다. 두 번째 Task·파일 효과는 없고 독립
+종단 판정도 FAIL이다.
+합성 fixture를 제품 Task의 실증으로 세지 않으며 추가 prompt 진단을 자동 반복하지 않는다.
+기본 6-case/18-episode 계획과 전체 장기 목표는 유지한다.
+실험 driver·독립 검증은 `tools/` 책임이며 추후 Linux 제품 Task로 통합할 runtime은
+`hosted/` 책임을 따른다. 응용 owner/version/channel 검사를 canonical K5나 OS ACL로 승격하지 않는다.
+
+
+---
+
+## 1. 도메인 맵
+
+| 도메인 | 책임 | 대표 산출물 | 빌드/실행 |
+|---|---|---|---|
+| **`kernel/`** | 베어메탈 x86_64 커널. Kernel Room 관리축, 클럭·메모리 보호·인터럽트·드라이버·AI 시스콜 표면 | `kernel/build/aios-kernel.bin` | `make` (→ `kernel/Makefile`) |
+| **`os/`** | ring3 유저스페이스 런타임 + 전용 프로그램(`os/apps/`) | 파이썬 도구, (예정) ELF 앱 | `python os/tools/*.py` |
+| **`hosted/`** | 의도된 기본 delivery 경로인 Linux-hosted userspace service와 backend-neutral contract | H1 contract/replay `CURRENT`; H2-a startup/inventory/CLI/인터넷·service lifecycle·MAIN binding·자원 관측·Cell 1 관리 전이·backend 수명/실행 결속 `PARTIAL` | `hosted/linux/aios-boot.py`, `aios-console.py`, `aios-agent.py`, `aios-backend.py`; `tools/hosted/Start-AiosConsole.ps1`; 전체 H2/H3는 후속 |
+| **`models/`** | AI/SLM 모델 매니페스트(가중치는 비추적) | `models/manifests/*.json` | — (데이터) |
+| **`store/`** | 부팅 후 온라인 드라이버/프로그램/모델 다운로드 카탈로그 | `store/catalog/*.json` | (예정) 런타임 클라이언트 |
+| **`tools/`** | host 준비·실행·이미지 선택, 테스트·빌드와 외부 source 정책 검증 | `tools/testkit/`, `tools/platform/` | testkit + platform guard |
+| **`docs/`** | 설계 문서 (도메인별 하위 폴더) | `docs/<domain>/*.md` | — (문서) |
+
+---
+
+## 2. 의존 방향 규칙 (중요)
+
+화살표는 "참조해도 된다"는 방향이다. **역방향 의존은 금지.**
+
+```text
+tools/ ──host lifecycle / build / verify──> kernel/ · os/ · hosted/ · models/ · store/
+
+os/ ──consume public ABI──> kernel/
+os/ ──read manifests──────> models/ · store/
+
+hosted/linux/ ──consume──> hosted/contracts/
+kernel/ · os/ ──X───────> hosted/
+```
+
+- **`kernel/`** 은 다른 어떤 도메인도 import 하지 않는다. 외부와의 접점은 **AI 시스콜 ABI**뿐이다.
+- **`os/`** 는 `kernel/`의 시스콜 ABI를 소비하고, `models/`·`store/`의 매니페스트를 읽는다.
+- **`hosted/`** 는 Linux-hosted product runtime과 backend-neutral contract를
+  소유한다. `kernel/` private header 또는 `os/` ring3 구현을 import하지 않으며,
+  `kernel/`과 `os/`도 `hosted/`에 의존하지 않는다.
+- **`models/` / `store/`** 는 데이터/카탈로그 도메인이다. 코드 의존성을 만들지 않는다.
+- **`tools/`** 는 host의 준비·실행·이미지 선택과 빌드·독립 검증, 외부 source
+  manifest 검사를 소유한다. guest의 제품 runtime/backend는 `hosted/`가 소유하며
+  guest runtime이 host 도구를 import하거나 실행 의존성으로 삼지 않는다.
+- **`docs/`** 는 무엇에도 의존하지 않는다.
+
+---
+
+## 3. "이건 어디에 두나?" 결정 가이드
+
+| 만들려는 것 | 위치 |
+|---|---|
+| 새 드라이버 / 커널 서브시스템 / 시스콜 | `kernel/<subsystem>/` (+ `kernel/include/`) |
+| 커널 빌드에 새 .c 추가 | `kernel/Makefile`의 `C_SOURCES`에 등록 |
+| 유저스페이스에서 도는 도구/서비스 | `os/tools/` 또는 `os/runtime/` |
+| 사용자가 실행하는 전용 앱 | `os/apps/<app-id>/` |
+| 모델(가중치) 추가 | 매니페스트는 `models/manifests/`, 실파일은 `models/weights/`(비추적) |
+| 부팅 후 받아올 항목 | `store/catalog/<id>.catalog.json` |
+| 테스트/빌드 자동화 | `tools/testkit/` |
+| Linux/QEMU/VirtIO upstream source manifest·guard | `tools/platform/` |
+| Linux-hosted 실행 서비스와 backend-neutral binding contract | `hosted/` (`hosted/linux/`, `hosted/contracts/`는 해당 구현·verifier와 함께 생성). `tools/platform/`에 runtime 코드를 넣지 않음 |
+| Linux 위 공간 상태 조회·대화·작업 진행 인터페이스 | guest 제품 runtime은 `hosted/`; `tools/`는 host 준비·실행·선택·독립 검증을 소유. 새 consumer는 기존 공개 계약을 소비하고 새 protocol은 별도 검증 |
+| 제품 목적·전역 큐·문서 관리 | `docs/meta/`의 각 정본; 같은 사실의 새 병렬 roadmap을 만들지 않음 |
+| 설계 노트 | `docs/<domain>/` + `docs/README.md` 인덱스 갱신 |
+| Room/Cell/Node/NodeBit 관리 설계 | `docs/kernel-room/` + 상위 성숙도 문서 동기화 |
+
+---
+
+## 4. 빌드 & 테스트 진입점
+
+빌드는 루트 `Makefile`이 `kernel/`로 위임한다. **항상 저장소 루트에서 실행한다.**
+
+```bash
+make all            # 커널 빌드 (→ kernel/build/aios-kernel.bin)
+make test           # 커널 빌드 + QEMU 스모크
+make os-smoke       # OS 도구 스모크 (tools/testkit)
+make help           # 전체 타깃
+
+# 세분화 테스트 (tools/testkit)
+python tools/testkit/aios-testkit.py all --strict
+```
+
+Windows: `pwsh -File .\tools\testkit\kernel\build-windows.ps1 -Target test`
+(자세한 설치는 [docs/tools/windows_build.md](docs/tools/windows_build.md))
+
+---
+
+## 5. 도메인 간 계약 (불변식)
+
+도메인을 나눠도 아래 계약은 깨지면 안 된다 (CLAUDE.md의 Key Invariants와 동일).
+
+- **AI 시스콜 번호 범위는 ABI-stable** — 재번호/중첩 금지. `kernel/`↔`os/`의 유일한 접점.
+- **텐서 64바이트 정렬** — AVX-512 불변식 (`kernel/mm/tensor_mm.c`).
+- **Kernel Room 정본 계층은 Room→Cell→Node→NodeBit** — K1 bounded bootstrap registry의 Cell/Node/NodeBit parent-child 관계는 명시적 binding과 generation을 가진다. 이 fixture를 external subsystem binding, live lifecycle 또는 전체 topology로 확장 해석하지 않는다.
+- **Kernel Room 게이트 수 = enum 크기** (`kernel/core/kernel_room.c`). 현재 9개 gate descriptor는 syscall-range **분류 메타데이터**이며 dispatcher-level Axis Gate enforcement가 아니다.
+- **헬스 스냅샷 ABI 안정** — SLM 오케스트레이터가 소비.
+- **Node 네임스페이스 분리** — Memory Fabric `domain_id`, SLM `agent_tree.node_id`, SLM `slm_nodebit_id`, runtime NodeBit `node_id`, pipeline `owner_node`, task/PID/ring ID는 독립이다. 명시적 adapter 없이 교차 비교하지 않는다.
+- **NodeBit 시스콜 분리** — `SYS_SLM_NODEBIT_LOOKUP`는 `slm_orchestrator.c`의 SLM policy catalog를 조회한다. `runtime/nodebit.c`는 `SYS_NODEBIT_REGISTER/UPDATE/STATS`와 현재 pipeline capability gate를 제공하는 별도 체계다.
+- **Axis Gate enforcement는 `PLANNED`** — canonical parent binding, principal, ownership, generation이 먼저다. `store/` 다운로드와 위험 autonomy action의 공통 Kernel Room authorize 경로도 아직 구현되지 않았다.
+- **AI resource ledger는 aggregate 관측 전용** — kind/unit/owner-validity ID는 append-only이고 validity flag가 없는 수치는 지원된 값으로 해석하지 않는다. `SYS_INFO_RESOURCE=0x706`과 `state resource`는 read-only CURRENT이며 owner attribution과 quota/reserve/apply는 아직 없다.
+- **AI pressure는 관측 전용** — plane ID는 append-only이며, pressure ranking과 gate eligibility bitmap을 섞지 않는다. 별도 apply 검증 전에는 scheduler migration/budget 변경에 연결하지 않는다.
+- **Linux substrate identity는 source-only** — PID/cgroup/pidfd/PSI/path를 canonical
+  Cell/Node/NodeBit ID로 재사용하지 않는다. H0 manifest/guard `CURRENT`는 hosted runtime,
+  license compatibility 또는 code import 승인이 아니며 schema v1은 `code_import=0`이다.
+- **K2/H1과 hosted 실행은 다른 증거 범위** — native K2-a의 boot-local immutable
+  결속, H1 host-only replay, hosted MAIN·Cell·backend 수명을 합쳐 전체 지원으로
+  표현하지 않는다. [관리 모델](docs/kernel-room/kernel_room_management_model_ko.md)이
+  의미를, [hosted 도메인](hosted/README.md)과 분야별 가이드가 실행 범위를 소유한다.
+- **상호작용 기록과 관리 identity를 구분한다** — 작업·세션·결과물·사용자 선택을
+  canonical Cell/Node/NodeBit로 자동 승격하지 않는다. UI와 에이전트의 상태 인터페이스는
+  같은 유효성·결과를 소비하고, 표시를 위한 추론으로 관리 원본을 덮지 않는다.
+- **영속성의 대상과 경계를 명시한다** — 설정/history 보존, 모델 결과, 작업 연속성,
+  부팅 간 canonical 상태 복원은 별개다. 이미지·source snapshot·실행 증거의 사실은
+  [운영 이미지 가이드](docs/os/aios_operating_image_guide_ko.md)가 소유한다.
+- **ring3 entry AC 계약은 saved/live를 분리한다** — 현재 QEMU bootstrap pair의 CPL3 `#BP` 2회와 `int 0x80` 6회에서 saved user RFLAGS는 불변이고 entry live AC는 항상 0이어야 한다. SMAP active는 `clac`, 비활성·미지원은 `pushfq/btr/popfq` fallback을 사용하며 `default`/`max-smap` CPU profile과 exact marker/`state sec` mirror가 분기를 고정한다. 이 계약을 future ring3 IRQ/NMI/IST, 실기기, resumable context 또는 process switch 증거로 확장 해석하지 않는다.
+
+---
+
+## 6. 세부 트리
+
+```
+aios-kernel/
+├── PROJECT.md            # ← 이 문서 (도메인 맵)
+├── README.md  CLAUDE.md  Makefile (루트 위임)
+│
+├── kernel/               # ① 베어메탈 커널
+│   ├── Makefile  README.md
+│   ├── boot/             # Multiboot2 엔트리, GDT/페이징/long mode
+│   ├── core/             # main, health, shell, kernel_room aggregate/management, user_*, linker.ld
+│   ├── interrupt/  mm/  sched/  hal/  runtime/  drivers/  lib/
+│   └── include/          # 커널 공개 헤더
+│
+├── os/                   # ② AIOS native ring3 유저스페이스
+│   ├── runtime/  main_ai/  compat/  examples/  tools/
+│   └── apps/             # 전용 프로그램 (스캐폴드)
+│
+├── hosted/               # ③ Linux-hosted 기본 delivery 도메인
+│   ├── contracts/        # H1-a/b/c CURRENT; 별도 boot-inventory-v1 계약
+│   └── linux/            # H2-a/CLI/Internet/MAIN binding PARTIAL; full H2/H3 PLANNED
+├── models/               # ④ 모델 매니페스트 (가중치 비추적)
+│   └── manifests/
+├── store/                # ⑤ 온라인 배포 카탈로그
+│   └── catalog/
+├── tools/                # ⑥ 테스트·빌드 + 외부 source 정책 검증
+│   ├── testkit/
+│   └── platform/         # manifest/guard only; hosted runtime 아님
+└── docs/                 # ⑦ 설계 문서 (kernel/ autonomy/ os/ models/ tools/ meta/ kernel-room/)
+```

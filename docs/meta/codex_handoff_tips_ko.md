@@ -1,0 +1,448 @@
+# Codex 작업 핸드오프 팁
+
+> 문서 역할: native 커널의 실전 지뢰와 디버깅 이유를 보존하는 참고 runbook
+> 문서 수명주기: 활성 runbook + 날짜별 역사 기록
+> 내용 검토일: 2026-09-13 — v0.10 Task·증거 정본 진입 갱신. 2026-09-09의 역할 정비와 아래 native·hosted 역사 기록은 보존하며 커널 재실행 검증이 아님.
+
+제품 목적은 [공간 인지·활동·사용자 상호작용 정본](aios_product_direction_ko.md),
+새 작업의 분류와 검증 범위는 [통합 작업 진입](integrated_work_guide_ko.md), 전역 큐는
+[성숙도 작업흐름](minimal_io_and_maturity_workflow_ko.md)이 소유한다.
+[문서 신선도 원장](document_freshness_registry_ko.md)에서 검토 범위와 재검토 조건을 확인한다.
+
+현재 사용자 진입은 [운영 이미지 가이드](../os/aios_operating_image_guide_ko.md)를 따른다.
+`Start-AiosImage.cmd`는 준비된 영속 이미지, `Start-AiosConsole.cmd`는 임시 개발 VM이다.
+모델·서비스·결속·복구의 현재 범위는 [MAIN](../os/aios_agent_binding_guide_ko.md),
+[backend](../os/aios_backend_lifecycle_guide_ko.md) 가이드가 소유한다(`PARTIAL`).
+CLI 소실·재부팅을 넘는 복구와 통합된 공간 인지·지속 상호작용은 후속이다.
+2026-09-09의 v0.9 로컬 통합은 v0.8의 MAIN 환경 문맥 전달과 요청 오류 안내를 포함한
+보존 이력이다. 이 체크포인트의 개발 소스 v0.10은 UUID 질문의 접수·조회·결과·같은 CLI가 소유한
+backend의 명시적 정지를 연결한다(`PARTIAL`). 정확한 관측 범위·버전·실행 판정은
+[환경 문맥 가이드](../os/aios_space_context_guide_ko.md)가 소유한다.
+해당 가이드 §6.1·§6.2의 원본 v0.9·후보 source·검사 snapshot은 보존하며, §6.3의 새
+Windows 전체·Linux Task fixture 결과와 한정 실제 모델 TaskSmoke PASS를 구분한다.
+TaskSmoke는 정상 답변·진행 중 Task 취소·worker/전체 backend 종료와 정상 VM 종료를 확인했으며 새 운영 이미지 acceptance는 미완료다. 기존 동기
+smoke나 fixture PASS를 새 실제 모델 Task 완료 검증으로 재사용하지 않는다.
+
+이 문서의 날짜별 실행 ID·테스트 수·당시 다음 작업은 역사적 맥락이다. §5와 §6의
+“현재”는 각 기록 시점을 가리키며 최신 전역 큐나 현재 소스 검증을 대신하지 않는다.
+이전에 상단에 누적했던 hosted 진행 기록은 §6에 원문을 보존했다.
+
+## 1. native 커널·ABI·부트 증거 변경의 작업 사이클
+
+이 절은 native 커널 실행이나 ABI·부트 증거를 바꾸는 경우에 적용한다. 문서·인덱스
+정비는 링크·신선도·충돌 검사를, hosted 인터랙션 변경은 해당 runtime·host 검증을
+선택한다. 범위 선택은 통합 진입 가이드 §7을 따르며 검증 실행 수가 무회귀를 보장하지 않는다.
+
+1. **셀프테스트 우선.** 새 경로는 부팅 셀프테스트로 왕복 검증하고 `[XXX] ... PASS key=value` 한 줄 마커를 남긴다. 실패도 `[XXX] ... FAIL ...`로 한 줄.
+2. **스모크 마커 필수화 (현재는 두 곳 동시!).** shared manifest가 도입되기 전까지 마커를 반드시 **둘 다** 추가한다:
+   - `tools/testkit/lib/kernel_lane.py`의 `required_smoke_patterns()` (리눅스/CI)
+   - `tools/testkit/kernel/build-windows.ps1`의 `Get-SmokeRequiredPatterns` (윈도우 로컬)
+   - 한쪽만 넣으면 다른 OS에서 스모크가 통과해버려 회귀를 놓친다.
+3. **관측 연결.** 런타임 상태는 `state <topic>` 셸 토픽(한 줄 `[STATE] topic key=value`, 값에 공백 금지)으로 노출하고, 새 토픽/필드는 `tools/testkit/lib/shell_lane.py`의 `DEFAULT_EXCHANGES`에 교환을 등록한다. `state list`의 토픽 목록 문자열도 갱신.
+   부팅 전용 관측 조각은 structured boot summary와 Python/PowerShell exact
+   required record를 함께 추가한다. Resource/pressure처럼 `observation_only=1`인
+   레코드는 정본 뒤 상충 필드도 허용하지 않는다.
+4. **고정밀 계측.** 시간이 걸리는 경로는 `kernel_time_monotonic_ns()`(TSC 기반)로 재서 관측에 ns로 포함.
+5. **native 변경의 검증 후보 (영향 범위와 정규 gate에 맞춰 선택):**
+   ```
+   py -3 -m unittest discover -s tools/testkit/tests -t tools/testkit -p "test_*.py" -v
+   cppcheck --std=c11 --platform=unix64 --enable=warning,performance,portability \
+     --inline-suppr --suppress=missingIncludeSystem --error-exitcode=1 -Ikernel/include kernel/
+   pwsh -File tools/testkit/kernel/build-windows.ps1 -Target test                       # full
+    pwsh -File tools/testkit/kernel/build-windows.ps1 -Target test -SmokeProfile minimal
+    pwsh -File tools/testkit/kernel/build-windows.ps1 -Target test -SmokeProfile storage-only
+    py -3 tools/testkit/aios-testkit.py shell --strict --skip-build                      # shell 레인
+    py -3 tools/testkit/aios-testkit.py boot-inventory --profiles full minimal storage-only --strict
+   ```
+   Windows에서 `python`이 Store alias로 잡히면 `py -3`를 쓴다.
+   normal verdict v1은 필수 문자열만 보지 않고 전체 로그의 panic/exception/대문자
+   `FAIL`·`FATAL`, health, terminal checkpoint 순서·중복, 증거 행/토큰 경계와 중복 key를
+   판정한다. shell PASS에는 같은 response record, 전체 transcript verdict, reader drain,
+   reboot acknowledgement와 QEMU exit code 0도 필요하다. 최신 계약은
+   `docs/tools/verification_tooling_evolution_design_ko.md`를 따른다.
+   Linux substrate의 resource schema·pin·manifest·guard 계약을 바꾸면 아래 두
+   host 계약을 실행한다. 제품 목적 링크·문서 역할만 바꾸는 경우에는 그 계약을
+   변경한 것으로 해석하지 않는다.
+   ```
+   py -3 tools/platform/linux_resource_guard.py
+   py -3 -m unittest discover -s tools/platform/tests -p "test_*.py" -v
+   ```
+6. **작업 브랜치는 `beta`.** 게시 요청이 있을 때 체크포인트를 만든다. main 이동은
+   명시 승인과 해당 beta SHA의 정규 검증 성공 뒤 같은 SHA의 fast-forward만 허용한다.
+
+---
+
+## 2. 이 커널의 지뢰 (실제로 밟았던 것들)
+
+### 2.1 `sti`는 PIC 리매핑(subsystem 7) 이후에만
+부팅 초기 PIC는 레거시 매핑이라 **IRQ0 → 벡터 8 = #DF(더블 폴트)**다. subsystem 7(`kernel_timer_irq_init`)이 PIC를 0x20+로 리매핑하기 전에 `sti`를 하면 타이머 첫 틱이 #DF로 떨어진다. M3-b-1에서 셀프테스트 끝의 무조건 `sti`로 이걸 밟았다.
+- **규칙:** 셀프테스트/초기화에서 IF를 켜야 하면 무조건 `sti` 대신 **이전 IF를 보존**한다:
+  ```c
+  uint64_t flags;
+  __asm__ volatile ("pushfq; pop %0; cli" : "=r"(flags) :: "memory");
+  /* ... critical ... */
+  if (flags & (1ULL << 9)) __asm__ volatile ("sti" ::: "memory");
+  ```
+- 부팅 경로는 shell_run의 `sti`까지 IF=0이다. 이 상태를 함부로 바꾸지 말 것.
+
+### 2.2 갓 스위치된 커널 스레드는 IF=0을 상속한다
+`kthread_switch`는 callee-saved+rsp만 바꾸고 RFLAGS는 건드리지 않는다. IRQ/부트 컨텍스트(IF=0)에서 fresh 스레드로 처음 진입하면 그 스레드도 IF=0 → 타이머가 못 들어와 선점 불가 → 무한 루프 행. **선점 대상 스레드의 진입점 첫 줄에서 `sti`** 해야 한다(M3-b-2의 워커가 그렇게 한다). 이후 선점→복귀는 iretq가 IF=1을 복원하므로 첫 진입만 챙기면 된다.
+
+### 2.3 선점 스위치 전에 EOI를 보낸다
+타이머 IRQ 핸들러에서 컨텍스트를 바꿔 나가면, 그 틱의 EOI를 먼저 보내지 않는 한 PIC이 다음 타이머 IRQ를 다음 스레드에 전달하지 않는다. `idt.c`의 타이머 경로는 `kernel_timer_irq_handler()` → `pic_send_eoi()` → `kthread_preempt_tick()` 순서다. 이 순서를 지켜라.
+
+### 2.4 커널이 유저 페이지를 만지면 SMAP fence로 감싼다
+M1에서 SMAP을 켠 뒤, `user_exec`의 스테이징 `memcpy`가 즉시 #PF 났다 — SMAP이 브래킷 밖 유저 페이지 접근을 실제로 잡는 것. 커널이 유저 페이지(U=1)를 직접 read/write하는 모든 구간은 `user_access_fence_begin()`/`user_access_fence_end()`로 감싼다(SMAP 미지원 CPU에선 no-op). `copy_to_user`/`copy_from_user`는 이미 내부에서 감싸므로 그대로 쓰면 된다.
+
+### 2.5 유저 접근은 4단계 페이지 전부 U/S=1이어야
+ring3에서 유저 페이지 접근 시 PML4→PDPT→PD→PT의 **모든** 레벨에 User 비트가 있어야 한다(최종 권한은 AND). PDE에만 U를 세우고 상위를 빼먹으면 #PF(error code에 instruction-fetch/user 비트). M3-b-3b2a부터 `address_space.c`가 private PML4/PDPT/PD의 해당 경로에만 U/S를 설정하며, `user_exec.c`는 부트 page table을 직접 변경하지 않는다.
+
+### 2.6 #DF 프레임의 레지스터 값은 신뢰하지 말 것
+#DF는 첫 폴트가 이미 스택을 손상시킨 뒤라 캡처된 RIP/RSP가 쓰레기일 수 있다(0x8 등). #DF가 뜨면 **원인은 직전의 다른 폴트**다. 이럴 땐 시리얼 디버그(`serial_printf`)로 실패 지점을 좁혀라 — 이 커널은 예외 시 CR2 덤프(#PF)와 전 예외 panic 봉쇄가 있어, 조용한 폴트 루프 대신 즉시 로그가 남는다.
+
+### 2.7 Multiboot info 포인터는 EBP 보존값에서 복구한다
+`_start`는 GRUB의 EBX(Multiboot info)를 EBP에 보존하지만 `setup_page_tables`가 EDI를 page-directory cursor로 덮는다. 과거 `long_mode_start`가 이 EDI를 C에 넘겨 부팅 로그의 info 주소가 항상 `p2_table_3`과 같았고, ACPI는 BIOS scan fallback 덕분에 통과했다. M3-b-3b1에서 `r13d = ebp`로 바로잡고, header/정렬/전체 tag chain/terminating tag를 bounded walk로 검증해 `[BOOT] Multiboot2 handoff PASS`로 남긴다. 실패한 handoff는 ACPI 같은 소비자에게 전달하지 않는다. 다시 EDI를 handoff 포인터로 사용하지 말 것. 실제 PMM 전에는 복구된 MBI의 memory-map tag 의미/예약 범위 셀프테스트와 Linux GRUB 교차검증이 별도로 필요하다.
+
+### 2.8 private 유저 VA가 low identity direct-map을 가린다
+현재 커널은 첫 4GiB를 identity mapping하고 유저 VA 64MiB도 그 안에 있다. private CR3에서 이 leaf를 별도 backing으로 바꾸면 커널 VA 64–66MiB가 더는 물리 64–66MiB를 가리키지 않는다. 따라서 그 물리 구간을 tensor allocator가 반환하면 private CR3 체류 중 잘못된 backing을 접근한다. M3-b-3b2a는 해당 구간을 모든 tensor free list와 활성 tensor record에서 live 검사로 제외하고 `[MM] bootstrap user tensor exclusion PASS ... excluded=2097152 ... boundary=1 coalesce=1`를 필수화했다. 이건 tensor allocator의 관리 범위를 설정 960MiB에서 958MiB로 줄이는 bootstrap 안전장치일 뿐, 전역 PMM 예약이나 물리 메모리 소유권 증명은 아니다. 장기 해법은 high-half kernel direct map 또는 PMM 기반 유저 VA 배치다.
+
+### 2.9 process CR3/TSS 전환은 IF=0 순서를 깨지 않는다
+M3-b-3b2b의 활성화 순서는 `caller IF 저장+cli → private CR3 activate → BSP boot-TSS rsp0에 process stack top 게시 → CPL3`다. 복귀는 `process rsp0 → boot rsp0 exact 복원 → boot CR3 exact 복원 → private leaf seal/backing scrub → current owner 해제 → caller IF 복원` 순서다. IF를 먼저 열면 IRQ가 boot CR3/rsp0와 stale current process의 모순을 관측한다. IF readback 실패는 pending guard를 유지하고 다시 `cli`; int80 raw entry RSP의 stack 범위 이탈, stack floor canary 손상, TSS baseline 불일치, leaf seal 실패도 계속 부팅하지 않고 fail-stop한다. `syscall_stack_top`은 이제 BSP baseline/fallback일 뿐 실제 process 실행 스택이 아니다. 현재는 BSP 단일 boot TSS만 갱신하며 SMP/per-CPU TSS 구현이 아니다. `kstack_floor_canary=1`도 guard page가 아니라 8바이트 floor canary 생존 증거다.
+
+### 2.10 interrupt gate는 DF를 자동으로 지우지 않는다
+ring3가 `std`를 실행한 뒤 인터럽트/시스콜로 들어오면 live DF=1이 커널 C 경계까지 따라온다. `interrupt/isr_stub.asm`의 common C call과 `core/user_entry.asm`의 syscall C call 앞 `cld`를 제거하지 말 것. CPU가 저장한 user RFLAGS frame은 그대로라 `iretq`는 사용자 DF를 복원한다. exit처럼 `iretq` 없이 커널로 돌아오는 경로도 이 `cld` 덕분에 DF=0을 유지한다.
+
+### 2.11 순차 pair counter는 선점 증거가 아니다
+PID 1 실행 뒤 PID 2를 호출하는 것만으로는 scheduler 전환을 증명하지 못한다. pair runner는 첫 teardown 뒤 `current_pid=0`, `last_pid=1`, boot CR3/BSP `rsp0` baseline과 정확한 publish/restore 카운터를 확인하고서만 slot 1에 진입한다. 최종 `runs=2`, `last_pid=2`, `rsp0_publishes=2`, `rsp0_restores=2`는 두 번의 독립 synchronous run과 cleanup 증거다. process event journal v1도 이 기존 경계를 벗어나지 않는다. 여섯 acquire/capture/release record의 owner lifecycle `0→1→0→2→0`은 순차 bootstrap 관찰이며 A→B→A CPU switch가 아니다. 실제 live switch는 별도 event kind, saved context, CPL3 timer IRQ stack 증거가 모두 생긴 뒤에만 주장한다.
+
+---
+
+## 3. 알아두면 좋은 구조
+
+- **두 스케줄러 개념이 분리돼 있다:** `sched/ai_sched.c`는 vruntime 장부질만 하는 **워크로드 회계 모델**(실제 CPU 전환 없음). 진짜 문맥전환은 `sched/kthread.c`(+`kthread_switch.asm`)다. 헷갈리지 말 것.
+- **Kernel Room의 정본은 Room→Cell→Node→NodeBit 관리축이다:** `kernel_room_snapshot_read()`는 계속 aggregate view이고, 별도 `kernel_room_management_snapshot_t`가 K1 bootstrap Cell 1/Node 1/NodeBit 2를 소유한다. K2-a는 또 다른 256B snapshot에서 Node 101을 producer-owned SLM MAIN source에만 결속한다. 이 한 boot-local immutable binding을 live lifecycle/reconciliation 또는 전체 Cell 관리자로 과장하지 말 것.
+- **Node/owner ID 공간이 여러 개다:** Memory Fabric `domain_id`, SLM `agent_tree.node_id`, SLM `slm_nodebit_id`, runtime NodeBit `node_id`, pipeline `owner_node`, scheduler `task_id`, process PID, ring ID는 서로 독립이다. 숫자 일치는 identity/binding 증거가 아니다. 교차 연결은 `(namespace, id, generation)`과 명시적 parent binding을 요구한다.
+- **두 NodeBit 체계가 병존한다:** `runtime/nodebit.c`의 capability registry와 `slm_orchestrator.c`의 effective policy-node catalog는 별개다. canonical NodeBit로 곧바로 합치지 말고 관리축 K3에서 namespace adapter/projection으로 연결한다.
+- **`SYS_SLM_NODEBIT_LOOKUP`는 runtime `nodebit.c`가 아니다:** `ai_syscall.c`는 이 번호를 `sys_slm_nodebit_lookup()`으로 보내 SLM policy catalog를 읽는다. runtime NodeBit의 syscall 표면은 `SYS_NODEBIT_REGISTER/UPDATE/STATS`(0x726~0x728)다.
+- **Kernel Room 게이트 테이블은 분류 메타데이터**다. 디스패처가 per-call로 검사하지 않는다. 현재 pipeline의 runtime NodeBit check, autonomy safe-mode, health flag는 서로 다른 좁은 제어이며 universal Axis Gate가 아니다. canonical binding, principal, ownership, generation 이전에 “모든 시스콜 전에 검사한다”고 서술하거나 enforcement부터 구현하지 말 것.
+- **pressure와 gate bitmap은 별도 축이다:** `runtime/ai_pressure.c`의 점수는 부하/중첩 관측이고, eligibility는 `online & affinity & policy_gate & health & budget` 교집합이다. 거부된 목적지를 낮은 pressure로 위장하거나 두 값을 한 scalar로 섞지 말 것. 현재 tracker는 `observation_only=1`이며 scheduler apply/migration 호출자가 없다.
+- **Memory Fabric `map_count`는 순간 동시성이 아니다:** attach는 증가시키지만 detach API가 없으므로 누적 logical-map 사건이다. pressure에는 reader/writer mask popcount, writer pair, read/write pair, weighted shared bytes만 사용한다.
+- **pressure 계층 깊이를 과장하지 말 것:** schema 1은 `max_levels=4`지만 `active_levels=2`인 system→plane까지만 CURRENT다. domain/task/window/ring child, fast/slow EWMA, stall window, SMP migration은 PLANNED다.
+- **resource ledger는 owner별 quota가 아니다:** `runtime/ai_resource.c` schema 1은
+  heap/tensor bytes, active fabric windows, registered rings, runnable tasks의
+  aggregate 5개 row만 읽는다. owner 4필드는 별도 validity bit를 가지며 현재는
+  모두 `OWNER_UNATTRIBUTED=1`, owner-valid bit 0이다. ID 0 자체를 NONE으로
+  고정하지 말 것. high-water는 tensor 1종만 valid하고 denial accounting은 없다.
+  `SYS_INFO_RESOURCE=0x706`과 `state resource`는 CURRENT지만 reserve/apply와
+  owner attribution은 PLANNED다.
+- **시스콜 추가 시:** 번호는 추가만(재번호 금지), 그리고 **커버하는 Kernel Room 게이트의 `syscall_end`를 확장**해야 한다(`kernel/core/kernel_room.c`). 이걸 빼먹으면 ROOM 스냅샷이 새 시스콜을 분류에서 누락한다(체크포인트 때 실제로 드리프트가 났던 부분).
+- **ABI 불변식:** SLM 스냅샷 구조체(`slm_hw_snapshot_t`)나 health 구조체 레이아웃을 바꾸면 소비자와 baseline이 깨진다. 관측 필드는 스냅샷 안이 아니라 별도 접근자로 노출하는 패턴을 따랐다(예: `slm_plan_observation_read`).
+- **bootstrap run-state C/NASM ABI:** `kernel/include/kernel/process.h`의 explicit offset + size static assert와 `kernel/core/user_entry.asm`의 `RUN_STATE_*`가 한 쌍이다. 기존 offset은 재번호하지 말고 append-only로 늘린다. 실제 값은 process-local이지만 `g_active_user_run_state`는 현재 동기 runner 한 개를 가리키는 단일 active pointer다.
+- **trapframe C/NASM 계약 (2026-08-02):** `interrupt_frame_t`의 모든 offset과 176B 크기는 `kernel/include/interrupt/trapframe.h`에 static assert되고 `isr_stub.asm`이 byte 상수를 mirror한다. 이 레이아웃은 append-only가 아니라 **exact 계약**이다(스텁 push 순서 + 하드웨어 frame이 고정). 함정 셋: ① `#BP` 게이트는 DPL=3이다 — ring3 `int3`가 CPL3 증거 경로라서, DPL=0로 되돌리면 유저 int3가 `#GP` panic이 된다. ② verdict가 로그 전체에서 `!!! EXCEPTION`을 금지하므로 셀프테스트 int3는 반드시 armed capture로 **조용히** 소비해야 한다(`trapframe_capture_consume`). ③ long mode는 frame push 전에 RSP를 16B로 내림 정렬한다 — same-CPL 기대 frame 주소는 `(rsp & ~15) - 176`이고, CPL3 진입은 TSS `rsp0`(=stack_top, 16B 정렬)라서 정확히 `stack_top - 176`이다. 데모의 int3는 int80 카운터를 건드리지 않는다(`int80_entries`는 여전히 3).
+- **ring3 entry AC 하드닝 (2026-08-09):** 이전의 공통 스텁/`int 0x80` live RFLAGS.AC 잔존 항목은 bounded QEMU 경로에서 해소됐다. pair의 CPL3 `#BP` 2회는 `common_saved_ac=2`, 여섯 int80 중 첫 호출은 AC=0이고 이후 hostile/exit 네 호출은 AC=1이라 `int80_saved_ac=4`다. saved user RFLAGS는 그대로 iret 대상에 남기고 entry live AC만 항상 0으로 만든다. SMAP active이면 `clac`, 비활성·미지원이면 `pushfq/btr/popfq` fallback이라 `#UD`가 없어야 한다. `default`는 `common_fallback=2 int80_fallback=6 gate_skips=8`, `max-smap`은 `common_clac=2 int80_clac=6 gate_skips=0`을 exact `[SEC] ring3 entry AC hardening PASS ... gate_mismatch=0`과 `state sec entry_*`로 검증한다. 이 proof는 future ring3 IRQ/NMI/IST나 실기기까지 일반화하지 않으며, resumable context/A→B→A/preemption 증거도 아니다.
+- **process-owned trap evidence snapshot v0 (2026-08-03):** ring3 `int3`의 armed capture를 global 결과로만 끝내지 않고 ISR 안에서 live process descriptor에 full 176B 복사한다. 이때 current owner, private CR3, BSP TSS `rsp0`, IF=0, exact `stack_top-176`, CPL3 RFLAGS 경계를 함께 확인한다. snapshot은 각 finish 뒤와 두 번째 실행이 끝난 최종 pair 경계에서 양쪽 모두 다시 읽어 같은 값임을 확인하며, per-boot sequence 1,2는 캡처 순서 증거일 뿐 switch event sequence가 아니다. prepare 코드 경로는 이전 snapshot을 지우고 run generation을 올리지만, live slot reuse/re-prepare와 stale-generation 거부는 아직 부팅으로 증명하지 않았다. exact marker는 `[PROC] trap evidence snapshot PASS ... stale_owner=0 resume_ready=0`이다. 이 상태를 continuation/saved-state switch로 과장하지 말 것.
+- **process event journal v1 (2026-08-03):** per-boot capacity 8의 고정 journal에 PID 1과 PID 2 각각의 acquire/capture/release를 append한다. 기존 record는 덮어쓰지 않고 여섯 record 뒤 `dropped=0 overflow=0`을 요구한다. event sequence 1..6과 capture sequence 1,2를 분리하며 exact kind/reason/from/to PID·slot·generation·owner/CR3/`rsp0`/IF/frame-reference vector를 `[PROC] process event journal PASS ... evidence_only=1 switch_events=0 resume_ready=0`, structured `process_event_journal`, `state user event_*` mirror로 고정한다. current lifecycle은 `0→1→0→2→0`이고 실제 CPU switch가 아니다. capacity 초과, 누락·중복·축약·확장·역순·stale owner·sequence 혼용은 fail-closed다.
+
+---
+
+## 4. 문서 규율
+
+- 미구현을 구현된 것처럼 쓰지 말 것. 상태는 실제 코드 기준으로.
+- 완료 시 로드맵 문서(`docs/meta/minimal_io_and_maturity_workflow_ko.md`)의 해당 마일스톤에 "✅ 완료 (날짜)"와 검증 마커를 남긴다(M3-b-3a가 그렇게 했다).
+- 낡은 문서는 이동/삭제하지 말고 상단에 `OLD` 배너 + 최신 기준 링크를 붙인다(`old_docs_check_2026_07_03_ko.md` 참조).
+- 문서 역할, 수명주기, 정본·mirror 선택의 전체 규칙은
+  [통합 작업 진입 가이드 §8](integrated_work_guide_ko.md#8-문서-관리-규칙)을 따른다.
+
+---
+
+## 5. 다음 방향 선택
+
+### 5.1 우선 관리축: K1과 bounded native K2-a
+
+`CURRENT` K1은 enforcement가 아니라 **하나의 Room-owned bootstrap Cell 안에 하나의 declared
+Node와 두 parent-bound typed management NodeBit record를 등록·조회하는
+management-only 조각**으로 구현됐다.
+
+아래 1~4는 별도 완료 마일스톤이 아니라 **K1 hierarchy registry v0 하나의 완료
+계약**이다. Cell만 등록되거나 NodeBit parent 증거가 빠지면 K1은 미완료다.
+
+1. 고정 용량 hierarchy registry와 append-only 상태/이유 ID를 만든다. duplicate ID,
+   잘못된 상태 전이, capacity 초과는 fail-closed다.
+2. canonical Node를 Cell에 명시적으로 bind하고 typed canonical namespace, ID,
+   generation을 고정한다. legacy source 숫자를 canonical ID로 재사용하지 않는다.
+3. canonical Node 아래 typed NodeBit 2개를 exact parent와 bounded bootstrap source로
+   등록한다. orphan/duplicate/stale generation은 거부한다.
+4. schema 1/1024B, capacity 2/4/8과 `[ROOM] management hierarchy selftest PASS ... management_only=1` boot evidence, structured `kernel_room_management`, `state room` mirror에서
+   exact Room/Cell/Node/NodeBit count, parent, generation을 교차검증한다.
+
+이 K1 조각에는 dispatcher hook, authorize, quota, resource apply, scheduler migration이
+없다. 2026-08-15에는 K1 ABI를 바꾸지 않고 별도 K2-a source-binding 조각을 추가했다.
+SLM producer가 exact-one active/persistent MAIN을 typed `AI_SERVICE` source로 내보내며,
+전용 boot-local instance/generation과 64B copied read API를 소유한다. Kernel Room은
+schema 1/256B, capacity 2 snapshot에서 canonical/source/binding generation을 분리하고
+missing/duplicate/orphan/namespace/kind/role/instance/zero/rollback/stale/init-order/
+schema/overflow/tail을 거부한다. exact marker, structured `kernel_room_binding`,
+`state binding`과 `entry-AC < K1 < K2 < aggregate ROOM` 순서가 정규 증거다.
+
+K2 전체는 `PARTIAL`이다. H1 OS-neutral lifecycle trace/replay와
+refresh/exit/recreate/rebind 의미는 contract/fixture로 고정됐고 exact-SHA 원격
+Linux/Windows/parity acceptance를 완료해 H1은 `CURRENT`다(2026-09-03, §5.8).
+별도 hosted MAIN producer·명시적 reconcile과 Cell 1 관리 전이는 `PARTIAL`이며
+backend 수명·MAIN 실행 결속은 `backend-02`의 로컬 실제 검증과 당시 소스 재검증을
+통과했다. 이는 보존된 소스의 증거이며 이후 변경된 현재 소스의 실행 증거는 별도로 확보한다.
+성숙도는 `PARTIAL`이며 전체 source coverage는 후속이다.
+K1~K4의 hierarchy/binding/observation attribution이 먼저이며,
+principal/ownership와 Axis Gate enforcement는 그 뒤의 K5 `PLANNED`다. Orbit은
+Cell/Node placement를 탐구하는 `RESEARCH`이므로 이 vertical slice의 완료 조건이 아니다.
+K2의 후속은 이 최소 계층의 source lifecycle/reconciliation을 강화·확대하고,
+K3에서만 runtime/SLM NodeBit를 namespace adapter로 read-only projection한다.
+
+K2-a의 source 선택은 구현 편의보다 semantic kind를 먼저 본다. Node 101
+`AI_SERVICE`의 native reference는 SLM agent-tree MAIN source로 구현됐고,
+Linux-hosted 기본 delivery의 MAIN은 producer-owned service instance/generation을 가진
+실제 userspace service로 `PARTIAL` 구현됐다. 현재 `policy_generation`이나 timestamp를 agent-tree source
+generation으로, Linux PID/pidfd/cgroup/PSI를 canonical identity로 재해석하지 않는다.
+native source는 producer-owned instance/generation과 copied read API를 통해 별도
+bounded binding snapshot에 연결된다. Memory Fabric main domain은
+Cell/resource source 후보이고 bootstrap process는 execution-instance source 후보다.
+어느 source도 Node 101과 숫자나 기존 generation 존재만으로 결속하지 않는다. 기존
+K1 1024B immutable snapshot은 K2에서 무심코 확장하지 않는다.
+
+### 5.2 병행 가능한 실행 substrate backlog
+
+리소스 관리축의 Slice 2 read-only UAPI/`state resource`는 2026-08-02에 완료됐다.
+bounded policy schema, owner attribution, quota/apply는 아직 별도 `PLANNED`이며 위
+management hierarchy 없이 임의 ID에 귀속하지 않는다.
+
+2026-08-03 최신 조사에서 고른 **process-owned trap evidence snapshot v0**와
+**process event journal v1**은 완료됐다. 기존 ring3 `int3` frame을 각 static process의
+snapshot/validity/capture sequence에 결속하고, capacity 8/no-overwrite journal로
+여섯 lifecycle/capture record를 보존한다. 둘 다 `evidence_only=1 switch_events=0
+resume_ready=0` 경계이며 전체 process 모델은 계속 `PARTIAL`이다. 실행 substrate의
+후속 후보는 resumable saved context와 runnable-state 결속을 포함한 live
+continuation/switch이고, bounded 실제 A→B→A를 증명한 뒤 timer preemption을 연결한다.
+이는 자동으로 다음 프로젝트 방향이 되지 않는다. 근거와 외부 참고선은
+[AIOS 빌드 참고 프로젝트 최신 조사](aios_build_project_landscape_2026_08_03_ko.md)를 본다.
+
+`address_space_selftest`는 부트 PML4 복제 + CR3 왕복까지 증명했다(공유 매핑). 실행 substrate의 세부 이력은:
+1. **정적 주소공간 슬롯별 private user leaf proof ✅ M3-b-3b1 완료 (2026-07-14)** — 정적 2슬롯에서 유저 영역(현재 고정 64MiB)을 서로 다른 2MiB backing에 매핑하고 canary 격리를 검증했다. 범용 주소공간 객체, PMM, 실제 프로세스 실행 연결은 아직 아니다.
+2. **private CR3 단일 runner ✅ M3-b-3b2a 완료 (2026-07-15)** — slot 0에서 기존 ELF를 동기 실행한다. exact raw boot CR3와 IF bit를 readback한 뒤에만 leaf policy reset/backing scrub을 수행하고, `leaf_sealed`와 hardware `nx_enforced`를 분리해 관측한다. 물리 64–66MiB는 tensor free/active set에서 제외하지만 PMM 예약으로 과장하지 않는다.
+3. **static bootstrap process + BSP TSS entry stack ✅ M3-b-3b2b 완료 (2026-07-15)** — 정적 descriptor 2개가 unique CR3/backing, process-local run state, unique 16KiB ring0 entry stack을 소유한다. 이 완료 시점에는 PID 1/slot 0에서만 `rsp0` exact publish/restore와 3회 `int 0x80`의 `stack_top-40` 진입을 증명했다.
+4. **slot 1 순차 ring3 실행 + pair cleanup proof ✅ 완료 (2026-07-26)** — PID 1 teardown이 exact clean state인지 확인한 뒤 PID 2/slot 1도 동일 ELF를 독립 CR3/backing/entry stack에서 실행한다. 두 process 각각 syscall/uaccess/exit/복원을 통과하고 `[USER] bootstrap process pair PASS ... between_clean=1 ... both_restored=1`과 `state user`의 `pair_*` 필드로 노출한다. 이는 선점이 아니다.
+5. **trapframe C/NASM 계약 + from_user 판별 ✅ 진입 게이트 완료 (2026-08-02)** — `interrupt_frame_t` 전 필드 offset과 176B 크기를 static assert + NASM mirror로 고정하고, CPL0 canary `int3`(`[TRAP] frame contract selftest PASS`)와 두 process의 ring3 `int3` 캡처(`[TRAP] user frame capture PASS`, `cs=0x23`/`ss=0x1b`/user RSP·RIP/`stack_top-176` exact)로 실경로를 증명했다. `state user`의 `trap_*` 필드로 노출된다. 이는 계약·판별 증거이며 아직 trapframe 기반 전환이 아니다.
+6. **process-owned trap evidence snapshot v0 ✅ 완료 (2026-08-03)** — ISR 시점 owner/current/private CR3/TSS `rsp0`/IF=0 검사를 통과한 full 176B frame을 해당 descriptor에 복사한다. per-boot seq 1,2, finish 뒤 보존, final pair 경계 양쪽 재조회, distinct storage, final current owner=0을 exact `[PROC]` record와 `state user`의 `saved_*` 필드로 고정한다. next-prepare reset과 run generation 증가는 구현됐지만 live reuse/re-prepare 증거는 `PLANNED`다. `resume_ready=0`이며 schedulable continuation이 아니다.
+7. **process event journal v1 ✅ 완료 (2026-08-03)** — append-only numeric kind/reason/outcome과 별도 event/capture sequence를 사용한다. capacity 8/no-overwrite 내부 journal의 여섯 acquire/capture/release record를 exact ordered vector, `[PROC] process event journal PASS`, structured `process_event_journal`, `state user event_*`로 고정하고 missing/duplicate/truncation/확장/역순/stale-owner/aggregate-only/overflow 반례를 Python과 PowerShell에서 fail-closed로 거부한다. `evidence_only=1 switch_events=0 resume_ready=0`이며 owner lifecycle `0→1→0→2→0`은 CPU switch 증거가 아니다.
+8. **live continuation + ring3 process 2개 선점 교대** — process에 full trapframe continuation/runnable state를 결속하고, IF=0 원자 집합에 current process·CR3·BSP TSS `rsp0`·saved frame·`g_active_user_run_state`를 함께 넣는다. bounded A→B→A 후 kthread 선점(M3-b-2)과 timer IRQ를 연결하고, 두 ring3 process의 syscall 왕복과 순서 이벤트를 `[SCHED]`/`[MM]`/`state user`로 검증한다.
+
+주의: 두 static process 모두 실제 ring3 실행은 하지만 현재 resume 모델은 여전히 순차 동기 C 호출 프레임이다. descriptor의 trap snapshot과 process event journal은 증거 소유권과 순서만 고정하며 `resume_ready=0`이다. journal 완료를 live transition 완료로 해석하지 말고, 다음 단계에서만 current process·CR3·BSP `rsp0`·saved frame·`g_active_user_run_state`를 IF=0에서 함께 교대하는 live continuation으로 나아가야 한다.
+
+### 5.3 Linux-hosted H축은 H1 완료 뒤 H2로 진행한다
+
+- H0 resource manifest/guard와 bounded H1 contract/replay가 `CURRENT`다. Linux daemon, adapter, KVM lane,
+  resource apply는 아직 `PLANNED`다.
+- K2-a native semantic oracle와 kernel-side reject 계약은 `CURRENT`다. H1-a/b/c의
+  OS-neutral lifecycle, 12개 fail-closed fixture와 bundle/parity는 원격 exact-SHA
+  acceptance를 완료했다. 이는 live source runtime 완료가 아니다.
+- 공통 H1 remote acceptance가 고정됐으므로 다음은 H2 Linux
+  userspace collector다. 광범위한 native 실행 substrate 완성과 최종
+  conformance closure는 H2의 선행조건이 아니다.
+- 기본 용량은 `SEMANTIC SAFETY K2/H1 40%`, `HOSTED DELIVERY H2/H3 50%`,
+  `H0 PROVENANCE + NATIVE CONFORMANCE 10%`다. 단계별 증거가 실패하면 다음 단계나
+  maturity 승격을 중단한다.
+- H4/H5, quota, throttle, scheduler migration, Axis Gate apply는 이번 4~8주 범위에서
+  제외한다. K5 principal/ownership/authorize와 별도 승인 뒤에만 다시 검토한다.
+- Linux PID/cgroup/pidfd/PSI/path는 `source_only`다. canonical ID로 재사용하거나
+  H0 통과를 runtime support, license 승인, code import로 표현하지 않는다.
+- 상세 H0~H5와 upstream pin은
+  `docs/os/linux_hosted_substrate_and_resource_policy_ko.md`를 따른다.
+
+### 5.4 qemu-mcp 진단 보조 경로 인수인계 (2026-09-02)
+
+- `tools/testkit/aios-testkit.py qemu-mcp-diagnostic`와 전용 helper/65개 host 테스트를
+  추가했다. Windows 실제 `--skip-build`와 ISO 재생성 경로 모두 `OBSERVED`/`CLEAN`을
+  확인했다. Linux 실제 실행은 미검증이므로 helper는 `PARTIAL`이다.
+- Windows launcher는 실행 전 suspended 상태에서 Job에 결속한다. known QEMU의
+  retained process handle 종료, registry 제거, server exit 0, reader drain,
+  Job active count 0, 소유 temp 제거를 구분해 검증한다. timeout/stop 실패를
+  containment로 회수해도 `CLEANUP_ERROR`를 유지한다.
+- 최신 진단 묶음은 `kernel/build/qemu-mcp-diagnostic/20260902t033015z-13524-9601270e/`다.
+  앞선 기본 빌드 포함 실행은 `20260902t032805z-23836-cbfe372c`다. 로그는 종료 전
+  snapshot이며 clean guest exit 또는 kernel PASS 증거가 아니다. 원본 실패 실행의
+  screenshot/로그도 같은 루트의 별도 run 디렉터리에 보존돼 있다.
+- 로컬 재검증: testkit 157개, PowerShell verdict 149개, hosted 120개,
+  platform 26개와 Linux resource guard 통과. 기존 H1 fixture/CI 구현은 유지됐으며
+  H1 exact-SHA Ubuntu/Windows/parity acceptance는 여전히 미확인이다.
+- 이 검증 당시 사용자/프로젝트 MCP 등록 설정, kernel ABI, baseline, main은 변경하지
+  않았고 작업 트리는 미커밋 상태였다. 이후 게시 승인과 진행은 §5.6을 따른다.
+- 상세 운영 계약/잔여 한계는 [qemu-mcp 가이드](../tools/qemu_mcp_guide_ko.md) §7을 따른다.
+
+### 5.5 H1 CI 전송 실패 경계 재개 점검 (2026-09-02)
+
+- H1 parity의 두 artifact download에서 `continue-on-error`를 제거하고
+  `digest-mismatch: error`를 명시했다. 다운로드 후 추출된 bundle의 replay가 성공해도
+  archive digest 실패를 CI 성공으로 숨길 수 없게 한다. 두 번째 download와 comparator는
+  `always() && !cancelled()`, parity upload는 `always()`로 진단 증거를 보존한다.
+- 두 workflow 정적 계약 테스트가 수정 전 실패·수정 후 통과했다. 전체 hosted suite는
+  이제 122개이며 testkit 157개, PowerShell 149개, platform 26개, resource guard와
+  OS tool smoke도 재실행해 통과했다. 일반 YAML validator/actionlint와 실제 Actions
+  실행은 수행하지 않았고, 정적 테스트를 그 대체 증거로 해석하지 않는다.
+- 새 로컬 fixture 묶음은
+  `build/hosted-binding-trace/manual-ci-integrity-resume-20260902/`이며 12/12 일치다.
+  Windows dirty-worktree 결과이므로 원격 cross-OS acceptance 입력은 아니다.
+- checkpoint 범위는 기존 Python/PowerShell verifier 보강, H1 contract/fixtures/CI,
+  qemu-mcp helper의 세 그룹이다. 공유 문서는 hunk별로 나누고 H1의 `.gitattributes`와
+  전체 fixture, qemu CLI의 eager import와 helper 파일을 각각 같은 그룹에 포함한다.
+- 이 점검 당시에는 게시 승인이 없어 staging/commit/push를 하지 않았다.
+  H1은 원격 exact-SHA 세 named job의 terminal 성공·artifact 확인 전까지 `PARTIAL`이다.
+
+### 5.6 beta 검증 후 동일 SHA main 승격 승인 (2026-09-02)
+
+- 사용자가 검증 결과를 근거로 main 승격까지 진행하도록 명시적으로 승인했다.
+  기존 verifier 보강, qemu-mcp 진단 helper, H1 contract/fixtures/CI를 독립 커밋으로
+  정리해 beta에 먼저 게시한다. main은 beta의 exact SHA가 원격 필수 gate와 H1 세
+  artifact 검증을 모두 통과한 뒤 같은 SHA로만 fast-forward한다.
+- 게시 전 로컬 QEMU full/minimal/storage-only boot inventory, max-smap minimal
+  boot, default/max-smap shell과 Cppcheck를 다시 실행해 통과했다. 이 로컬 결과는
+  새 커밋의 원격 CI나 H1 cross-OS acceptance를 대신하지 않는다.
+- 코드 감사에서 발견한 깊은 JSON 중첩과 잘못된 Unicode trace ID의 정규 실패 출력
+  경계는 게시 전에 회귀 테스트와 함께 보강한다. H1 검증 완료가 H2 runtime,
+  live K2 reconciliation, apply 지원 또는 qemu-mcp Linux E2E 완료를 뜻하지 않는다.
+
+### 5.7 접근 복구와 H1 입력 실패 계약 closure (2026-09-03)
+
+- NAS 접근 복구 뒤 beta의 로컬 커밋 `669bd5f`(관찰 family 판정)와
+  `a1f12c1`(qemu-mcp 진단 helper), 미커밋 H1 작업을 확인했다. 원격 beta는
+  `228f78b`, main은 `5b345f3`으로 그대로였다.
+- 중단 시 호출부만 저장돼 있던 strict JSON decoder를 완성했다. 깊은 중첩은 trace의
+  `trace.syntax` 또는 contract/manifest/bundle infrastructure 실패로 남기고, invalid
+  trace ID metadata와 surrogate JSON 출력/artifact 문제를 함께 회귀로 고정했다.
+- hosted 132개, testkit 157개, PowerShell 149개, platform 26개, resource guard,
+  OS smoke를 통과했다. 새 로컬 fixture 묶음
+  `build/hosted-binding-trace/prepublish-20260903/`은 12/12 일치다.
+  dirty Windows 작업 트리의 결과이므로 원격 cross-OS acceptance 입력은 아니다.
+- 다음 게시 단계는 §5.6의 승인된 beta-first 흐름이다. H1 `CURRENT` 승격은 새 exact
+  SHA의 원격 named producer/parity jobs와 세 artifact를 확인한 뒤에만 수행한다.
+
+### 5.8 H1 원격 acceptance 완료 (2026-09-03)
+
+- 구현 커밋 `e6c7979b9114d32e5f2e28536d307e9cccaf8381`을 beta에 게시했다.
+  [Actions run 33688967921](https://github.com/tjwlstj/aios-kernel/actions/runs/33688967921)의
+  Ubuntu/Windows fixture와 parity 세 job이 terminal 성공했고 두 download step도 성공했다.
+  static-analysis, 양 OS-tools matrix와 build-and-boot를 포함한 전체 7개 job도 성공했다.
+- 세 artifact를 내려받은 뒤 같은 clean checkout에서 독립 parity를 재실행해 12개
+  PASS를 확인했다. H1 host-only contract/replay/fixture/artifact 범위를 `CURRENT`로
+  승격한다. 정확한 artifact ID와 hash/provenance 근거는
+  [H1 작업 준비서 §13.2](../os/h1_binding_trace_replay_workplan_ko.md#132-2026-09-03-원격-acceptance-완료)를 따른다.
+- 위 §5.4~5.7의 pending·로컬 결과는 당시 이력이다. 이 완료에 H2 runtime,
+  live K2 reconciliation, apply 또는 Linux qemu-mcp 실제 E2E를 포함하지 않는다.
+- maturity metadata와 mirror를 맞춘 최종 커밋은 새 exact SHA로 beta CI와 H1 artifacts를
+  다시 검증한 뒤에만 main으로 fast-forward한다. H2 실행 코드는 이번 게시에 추가하지 않는다.
+
+
+## 6. 2026-09-08까지의 hosted 진행 기록 (역사 보존)
+
+> 이 절은 개정 전 상단 기록을 보존한다. 문서 안의 현재·기본·소스 일치는 각 당시
+> 환경의 표현이다. 게시 시 제품 35개 중 4개의 형식 bytes가 달라졌으며 AST는 같았다.
+> 보존 이미지의 실행과 현재 소스의 차이는 운영 이미지 가이드 §11을 따른다.
+> 이 기록의 날짜나 판정을 이번 문서 정비로 갱신하지 않는다.
+
+최종 갱신: 2026-09-08 (backend 수명·MAIN 실행 결속의 로컬 실제 검증 완료와 이전 실행 증거 보존)
+
+문서 역할: 커널 작업의 실전 지뢰와 디버깅 이유를 보존하는 참고 runbook.
+준비된 운영 이미지의 사용자 진입점은 `tools/hosted/Start-AiosImage.cmd`이며 모델 profile은
+`-Agent`로 선택한다. 새 환경의 Build·Smoke·Run은 [운영 이미지 가이드](../os/aios_operating_image_guide_ko.md)를 따른다.
+`tools/hosted/Start-AiosConsole.ps1` 또는 같은 위치의 `.cmd`는 임시 개발 VM이다.
+두 경로 모두 실제 Linux에서 AIOS banner·`aios>`·DNS/HTTP(S) GET을 제공한다.
+CLI는 `PARTIAL`; source-only inventory와 사용자가 요청한 실제 network I/O를
+구별한다. 세션·정상 종료·실행 증거와 남는 범위는
+[CLI·인터넷 가이드](../os/aios_cli_internet_guide_ko.md)를 따른다.
+현재 H2 진입점: `hosted/linux/aios-boot.py`의 초기화·Linux-visible 하드웨어 inventory는
+`PARTIAL`이다. [유저스페이스 가이드](../os/aios_userspace_boot_hardware_guide_ko.md)의
+새 디렉터리·동일 run·외부 verifier 계약을 따른다. H1 native trusted target에 Linux
+장치를 끼워 넣지 않으며 전체 H2/H3는 `PLANNED`다. 당시 로컬 `qemu-07`은 AIOS READY와
+정상 종료를 확인했고, 166개 hosted 테스트(Windows 1 skip)·Linux H2-a 25개 테스트를
+통과했다. 정확한 run identity와 증거는 가이드 §8을 따른다. 아래 과거 완료 이력과 구분한다.
+저장소 전체 작업 분류와 문서 관리는
+[통합 작업 진입 가이드](integrated_work_guide_ko.md), 현재 빌드·구현 불변식은
+[CLAUDE.md](../../CLAUDE.md)가 소유한다. 이 문서는 둘을 대체하지 않고 “왜 그런지”와
+“어떻게 디버깅했는지”를 보완한다.
+
+M3-b-3a부터 M3-b-3b2b까지(주소공간 전환 → private leaf → process-owned 동기 runner) 작업은 우리 규약을 정확히 따랐다(셀프테스트 마커 + `state` 노출 + 스모크 3곳 + shell 레인 + 문서). 이 형식을 계속 유지하면 된다.
+
+---
+
+CLI v0.2/schema 2는 source 12개를 기록하며 `service status/start/stop/restart`를 제공했다.
+[서비스 수명주기 가이드](../os/aios_service_lifecycle_guide_ko.md)의 CONSOLE_RUNTIME은
+SUPPORTING/PARTIAL이다. CLI exit와 daemon exit를 구분하며 `-ServiceSmoke -GuestTests`로
+두 CLI 사이 생존·세대 증가·정상 종료를 검증한다. 과거 schema 1 증거는 당시 source 8개로
+재생한다. Node 101/SLM MAIN에 관측 daemon을 임의 결속하지 않는다.
+최종 service-04는 일반 사용자 Linux 147 tests, 두 CLI 사이 생존, 세대 1→2→3,
+실제 DNS/HTTPS와 정상 서비스·VM 종료를 통과했다. Windows는 279 tests 중
+Linux 전용·symlink 17개 skip, 나머지 통과다. service-01/02 실패와 수정 근거는
+서비스 가이드에 보존했다. CLI v0.3/schema 3은 source 20개와 별도 MAIN producer,
+hosted authority의 `agent`·`room`·`ask`를 구현했다(`DIRECT/PARTIAL`). `-Agent`로 외부 모델
+cache를 준비하고 대화형 VM을 시작한다. `-AgentSmoke -GuestTests`가 실제 warmup·질문,
+CLI 재접속·restart·stale·명시적 reconcile과 종료를 검사한다. 결과·실패 이력·정확한
+잔여는 [MAIN 가이드](../os/aios_agent_binding_guide_ko.md) §8을 따른다. 전체 H2/H3,
+자원 귀속·principal·apply와 범용 설치·복구 완료를 자동으로 주장하지 않는다.
+`build/hosted-agent/agent-02`는 실제 warmup 2회·질문 3회·binding 1→2·정상 종료를 수행했다.
+원래 종료 parser가 shell prompt 접두사를 놓친 FAIL 판정은 보존했고, 좁힌 수정과 반례
+검증 뒤 별도 `agent-replay-verdict.json`이 PASS다. 당시 runtime source 20개 snapshot으로 재생한다.
+`interactive-03`은 v0.3의 실제 DNS/HTTPS와 MAIN 미시작 ABSENT 종료까지 최종 PASS다.
+v0.4의 DIRECT/PARTIAL 조각은 유효 binding 아래 MAIN/backend의 CPU/RSS와 system PSI 관측이다.
+명시적 관계를 canonical ownership이나 resource apply 권한으로 추론하지 않는다.
+v0.4/schema 4/source 25는 `resources link/status/sample`과 요청 전후 관측을 도입했다.
+당시 공개 MAIN 응답·per-run 형식을 schema 2로 올리고 이전 형식을 보존했다.
+관계·두 프로세스·system PSI 경계 및 실행 acceptance는
+[자원 관측 가이드](../os/aios_resource_observation_guide_ko.md)를 따른다.
+최종 `build/hosted-resources/resource-02`는 당시 v0.4 source 25개 snapshot과 일치하며 Linux 312개
+검사·실제 warmup/질문 각 1회·CPU/RSS 표본 2개·system PSI 세 종류·DNS/HTTPS·정상 종료
+모두 PASS다. 당시 Windows 전체 444개 중 38개 skip, 실행 406개 통과다. resource-01은 PSI
+기본 비활성 상태의 첫 성공 증거로 보존했다.
+v0.5/session schema 5/source 25개, MAIN protocol/run schema 3/source 18개는
+`cell status/activate/deactivate`를 제공한다. 기존 Cell 1 관리 전이는 `DIRECT/PARTIAL`이며
+이전 v0.5 `cell-01`의 로컬 Linux·실제 모델 검증을 통과했다([Cell 수명 가이드](../os/aios_cell_lifecycle_guide_ko.md)).
+비활성화해도 MAIN/backend는 계속 실행되며 재활성화 뒤 명시적 발견·재결속이 필요하다.
+`build/hosted-cells/cell-01`은 26개 CLI 명령에서 Cell 세대 1→2→3, binding과 resource
+relation 세대 1→2, 실제 Qwen warmup·질문 각 1회, DNS/인증서 검증 HTTPS와 정상
+MAIN/backend/VM 종료를 통과했다. 최종 Windows·Linux 테스트 수와 정확한 실행 identity는
+Cell 수명 가이드에 보존한다. 이전 agent-02/resource-02는 당시 단계의 증거로 유지한다.
+이 Cell 실행은 당시 v0.5 snapshot으로 재생하며 현재 v0.7 소스의 검증 완료를 뜻하지 않는다.
+현재 CLI v0.7/session schema 7/source 31개와 MAIN protocol/run schema 4/source 24개는
+v0.6에서 도입한 `backend status/start/stop/restart`를 유지한다. receipt schema 2의 `backend_execution`이
+실제 MAIN 요청 대상의 연속성을 검사한다. 이 DIRECT/PARTIAL 확장은 `backend-02`에서
+로컬 Linux·실제 모델·교체 후 요청 거부·명시적 복구·자원 관측·DNS/HTTPS·정상 종료를
+검증했다. 원본 verdict를 보존한 당시 소스 독립 재검증도 통과했으며 상세 증거는
+[backend 수명 가이드](../os/aios_backend_lifecycle_guide_ko.md)를 따른다.
+`backend-02`의 보존된 소스 증거를 이후 모델 이미지 기록 경로 수정이 반영된 현재 소스와 혼합하지 않는다.
+현재 v0.7의 `backend recover`는 동일 CLI가 미리 확보한 child pidfd로 supervisor 소실 뒤
+명시적 정리를 수행한다(`PARTIAL`, 실제 Linux·모델 기록의 별도 독립 재검증 PASS; 원본 FAIL 보존). 별도 `RECOVERED` 증거와
+MAIN 재시작·재결속 계약은 위 backend 수명 가이드를 따른다. CLI 소실·재부팅 이후 복구와
+필요한 worker·cgroup의 명시적 읽기 관계, 전체 H2/H3·native Cell
+lifecycle·ownership·principal·apply와 범용 설치/복구는 후속이다.
+
+별도 기본 운영 이미지는 `image-07`의 같은 4 GiB 디스크로 온라인 두 번·오프라인 한 번의
+cold boot, UID 1000 CLI, 설정·history 보존과 정상 종료를 검증했다(`SUPPORTING/PARTIAL`).
+현재 checkout에서는 `Start-AiosImage.cmd`로 검증 원본에서 만든 영속 사용자 복사본을
+바로 실행한다. 보존된 image-07의 source 35개와 당시 CLI v0.6/session 6/source 31개를 구분하며,
+모델 bundle·부팅 간 canonical 상태 복원은 없다. 실제 UUID·판정·실패 이력과 사용법은
+[운영 이미지 가이드](../os/aios_operating_image_guide_ko.md)를 따른다. 기존 `backend-02`의
+모델 증거를 기본 이미지의 모델 기능으로 해석하지 않는다.
+
+모델을 포함하는 별도 `-Agent` profile도 `SUPPORTING/PARTIAL`이다. `model-image-04`에서
+Linux 이미지 검사 51개, 같은 디스크의 online·offline 두 cold boot, 실제 warmup·질문 각
+2회, 명시적 재결속·인터넷·정상 종료와 당시 v0.6 source 35개의 독립 재검증을 통과했다.
+`local-model` 사용자 사본의 실제 `.cmd -Agent` 진입·상태 조회·정상 종료도 확인했다.
+실패한 model-image-01~03과 basic image-07·backend-02의 역사적 원본은 별도로 보존한다.
+
+현재 v0.7/session 7/source 35개의 정상 모델 이미지는 `model-image-05`다. online·offline
+두 부팅 45명령, 실제 warmup·질문 각 2회·재결속·인터넷·정상 종료와 현재 소스 독립 재생이
+PASS이며 원본 verdict와 전체 파일을 보존했다. 전용 0.7 실행기 (`build/hosted-image-v07/Start-Aios-0.7.cmd`)의
+`model-image-05-user` 사본에서도 세 명령·정상 종료를 확인했다. 기존 `local-model`·v0.6 원본·
+기본 포인터는 유지한다. 별도 장애 복사본 02는 같은 worker의 recover·즉시 exit·정상 종료를
+실제 검증했으며, 첫 복사본 01의 원본 FAIL은 보존한다. 정상 이미지와 장애 증거를 구분하며
+정확한 결과는 운영 이미지 가이드 §9.7에 있다.
+기본 실행에 `Selection`·`Select`·`Rollback`을 추가한 host 경로는 §9.8을 따른다.
+기존 0.6 기본 실행은 역사적 증거이며 이제 저장한 선택을 우선한다. 각 디스크·history와
+legacy 포인터는 보존한다. Windows 로컬에서 0.7·0.6의 실제 기본 부팅과 최종 0.7 재선택을
+통과했으며 현재 기본은 0.7이다. 이 선택 경로의 성숙도는 `SUPPORTING/PARTIAL`이다.

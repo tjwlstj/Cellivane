@@ -1,0 +1,526 @@
+/*
+ * AIOS Kernel - SLM Hardware Orchestrator
+ * AI-Native Operating System
+ */
+
+#ifndef _AIOS_SLM_ORCHESTRATOR_H
+#define _AIOS_SLM_ORCHESTRATOR_H
+
+#include <kernel/types.h>
+#include <kernel/health.h>
+#include <kernel/selftest.h>
+#include <drivers/platform_probe.h>
+#include <mm/memory_fabric.h>
+#include <runtime/ai_ring.h>
+
+#define SLM_HW_MAX_DEVICES 16
+#define SLM_PLAN_CAP       16
+#define AGENT_TREE_MAX_NODES 10
+#define SLM_NODEBIT_MAX_NODES 16
+#define SLM_HW_SNAPSHOT_ABI_VERSION 1u
+#define SLM_AGENT_SOURCE_SCHEMA_VERSION 1U
+#define SLM_AGENT_SOURCE_BOOT_INSTANCE  1ULL
+#define SLM_AGENT_SOURCE_BOOT_GENERATION 1ULL
+
+#define SLM_USER_HW_ACCESS_F_BOOTSTRAP_SNAPSHOT BIT(0)
+#define SLM_USER_HW_ACCESS_F_SHARED_RING        BIT(1)
+#define SLM_USER_HW_ACCESS_F_ZERO_COPY_WINDOW   BIT(2)
+#define SLM_USER_HW_ACCESS_F_DEVICE_NODES       BIT(3)
+#define SLM_USER_HW_ACCESS_F_MEDIATED_IO        BIT(4)
+#define SLM_USER_HW_ACCESS_F_RISKY_IO_ALLOWED   BIT(5)
+
+#define SLM_NODEBIT_F_PRESENT            BIT(0)
+#define SLM_NODEBIT_F_USER_VISIBLE       BIT(1)
+#define SLM_NODEBIT_F_OBSERVE_ONLY       BIT(2)
+#define SLM_NODEBIT_F_APPLY_ALLOWED      BIT(3)
+#define SLM_NODEBIT_F_RISKY              BIT(4)
+#define SLM_NODEBIT_F_REQUIRES_MEDIATION BIT(5)
+#define SLM_NODEBIT_F_RUNTIME_READY      BIT(6)
+
+typedef enum {
+    SLM_TEMPLATE_NONE = 0,
+    SLM_TEMPLATE_PCI_ETHERNET = 1,
+    SLM_TEMPLATE_PCI_USB = 2,
+    SLM_TEMPLATE_PCI_STORAGE = 3,
+    SLM_TEMPLATE_DISCOVERY = 4,
+} slm_template_t;
+
+typedef enum {
+    SLM_ACTION_NONE = 0,
+    SLM_ACTION_REPROBE_PCI = 1,
+    SLM_ACTION_BOOTSTRAP_E1000 = 2,
+    SLM_ACTION_E1000_TX_SMOKE = 3,
+    SLM_ACTION_E1000_DUMP = 4,
+    SLM_ACTION_BOOTSTRAP_USB = 5,
+    SLM_ACTION_USB_DUMP = 6,
+    SLM_ACTION_BOOTSTRAP_STORAGE = 7,
+    SLM_ACTION_STORAGE_DUMP = 8,
+    SLM_ACTION_IO_AUDIT = 9,
+    SLM_ACTION_CORE_AUDIT = 10,
+    SLM_ACTION_E1000_RX_POLL = 11,
+    SLM_ACTION_COUNT = 12
+} slm_action_t;
+
+AIOS_STATIC_ASSERT(SLM_ACTION_COUNT == 12,
+    "Update SLM action lookup tables when enum changes");
+
+static inline bool slm_action_valid(uint32_t action) {
+    return action < SLM_ACTION_COUNT;
+}
+
+typedef enum {
+    SLM_RUNTIME_ABSENT = 0,
+    SLM_RUNTIME_BOOTSTRAP = 1,
+    SLM_RUNTIME_READY = 2,
+    SLM_RUNTIME_DEGRADED = 3,
+    SLM_RUNTIME_FAILED = 4,
+    SLM_RUNTIME_COUNT = 5
+} slm_runtime_state_t;
+
+AIOS_STATIC_ASSERT(SLM_RUNTIME_COUNT == 5,
+    "Update SLM runtime state users when enum changes");
+
+static inline bool slm_runtime_state_valid(uint32_t state) {
+    return state < SLM_RUNTIME_COUNT;
+}
+
+typedef enum {
+    SLM_PLAN_EMPTY = 0,
+    SLM_PLAN_PROPOSED = 1,
+    SLM_PLAN_VALIDATED = 2,
+    SLM_PLAN_APPLIED = 3,
+    SLM_PLAN_FAILED = 4,
+    SLM_PLAN_REJECTED = 5,
+} slm_plan_state_t;
+
+typedef enum {
+    SLM_IO_MODE_CONSERVATIVE = 0,
+    SLM_IO_MODE_BALANCED = 1,
+    SLM_IO_MODE_AGGRESSIVE = 2,
+} slm_io_mode_t;
+
+typedef enum {
+    AGENT_OPERATOR_MODE_STABILIZE = 0,
+    AGENT_OPERATOR_MODE_BALANCE = 1,
+    AGENT_OPERATOR_MODE_EXPLORE = 2,
+} agent_operator_mode_t;
+
+typedef enum {
+    AGENT_NODE_ROLE_NONE = 0,
+    AGENT_NODE_ROLE_MAIN = 1,
+    AGENT_NODE_ROLE_GUARDIAN = 2,
+    AGENT_NODE_ROLE_ROUTER = 3,
+    AGENT_NODE_ROLE_PLANNER = 4,
+    AGENT_NODE_ROLE_CRITIC = 5,
+    AGENT_NODE_ROLE_SUMMARIZER = 6,
+    AGENT_NODE_ROLE_VERIFIER = 7,
+    AGENT_NODE_ROLE_MEMORY_DISTILLER = 8,
+    AGENT_NODE_ROLE_TOOL_WORKER = 9,
+    AGENT_NODE_ROLE_DEVICE = 10,
+} agent_node_role_t;
+
+/*
+ * Producer-owned identity for the bounded native K2 semantic oracle.
+ * These IDs are independent from Kernel Room, runtime NodeBit, PID, policy,
+ * and timestamp namespaces. Append new values; never renumber existing ones.
+ */
+typedef enum {
+    SLM_AGENT_SOURCE_NAMESPACE_INVALID = 0,
+    SLM_AGENT_SOURCE_NAMESPACE_AGENT_TREE = 1,
+    SLM_AGENT_SOURCE_NAMESPACE_COUNT = 2,
+} slm_agent_source_namespace_t;
+
+AIOS_STATIC_ASSERT(
+    SLM_AGENT_SOURCE_NAMESPACE_INVALID == 0 &&
+    SLM_AGENT_SOURCE_NAMESPACE_AGENT_TREE == 1 &&
+    SLM_AGENT_SOURCE_NAMESPACE_COUNT == 2,
+    "SLM agent source namespace IDs are append-only");
+
+typedef enum {
+    SLM_AGENT_SOURCE_KIND_INVALID = 0,
+    SLM_AGENT_SOURCE_KIND_AI_SERVICE = 1,
+    SLM_AGENT_SOURCE_KIND_COUNT = 2,
+} slm_agent_source_kind_t;
+
+AIOS_STATIC_ASSERT(
+    SLM_AGENT_SOURCE_KIND_INVALID == 0 &&
+    SLM_AGENT_SOURCE_KIND_AI_SERVICE == 1 &&
+    SLM_AGENT_SOURCE_KIND_COUNT == 2,
+    "SLM agent source kind IDs are append-only");
+
+typedef enum {
+    SLM_AGENT_SOURCE_ROLE_INVALID = 0,
+    SLM_AGENT_SOURCE_ROLE_MAIN = 1,
+    SLM_AGENT_SOURCE_ROLE_COUNT = 2,
+} slm_agent_source_role_t;
+
+AIOS_STATIC_ASSERT(
+    SLM_AGENT_SOURCE_ROLE_INVALID == 0 &&
+    SLM_AGENT_SOURCE_ROLE_MAIN == 1 &&
+    SLM_AGENT_SOURCE_ROLE_COUNT == 2,
+    "SLM agent source role IDs are append-only");
+
+typedef enum {
+    SLM_AGENT_SOURCE_LIFECYCLE_INVALID = 0,
+    SLM_AGENT_SOURCE_LIFECYCLE_ACTIVE = 1,
+    SLM_AGENT_SOURCE_LIFECYCLE_COUNT = 2,
+} slm_agent_source_lifecycle_t;
+
+AIOS_STATIC_ASSERT(
+    SLM_AGENT_SOURCE_LIFECYCLE_INVALID == 0 &&
+    SLM_AGENT_SOURCE_LIFECYCLE_ACTIVE == 1 &&
+    SLM_AGENT_SOURCE_LIFECYCLE_COUNT == 2,
+    "SLM agent source lifecycle IDs are append-only");
+
+#define SLM_AGENT_SOURCE_F_IDENTITY_VALID   ((uint32_t)BIT(0))
+#define SLM_AGENT_SOURCE_F_KIND_VALID       ((uint32_t)BIT(1))
+#define SLM_AGENT_SOURCE_F_ROLE_VALID       ((uint32_t)BIT(2))
+#define SLM_AGENT_SOURCE_F_LIFECYCLE_VALID  ((uint32_t)BIT(3))
+#define SLM_AGENT_SOURCE_F_GENERATION_VALID ((uint32_t)BIT(4))
+#define SLM_AGENT_SOURCE_ALL_VALID_FLAGS    ((uint32_t)0x1FU)
+
+AIOS_STATIC_ASSERT(
+    (SLM_AGENT_SOURCE_F_IDENTITY_VALID |
+     SLM_AGENT_SOURCE_F_KIND_VALID |
+     SLM_AGENT_SOURCE_F_ROLE_VALID |
+     SLM_AGENT_SOURCE_F_LIFECYCLE_VALID |
+     SLM_AGENT_SOURCE_F_GENERATION_VALID) ==
+        SLM_AGENT_SOURCE_ALL_VALID_FLAGS,
+    "SLM agent source validity flags are append-only");
+
+typedef enum {
+    AGENT_MODEL_CLASS_MICRO = 0,
+    AGENT_MODEL_CLASS_SMALL = 1,
+    AGENT_MODEL_CLASS_MEDIUM = 2,
+    AGENT_MODEL_CLASS_MAIN = 3,
+} agent_model_class_t;
+
+typedef enum {
+    SLM_NODE_KIND_NONE = 0,
+    SLM_NODE_KIND_API = 1,
+    SLM_NODE_KIND_TOOL = 2,
+    SLM_NODE_KIND_DEVICE = 3,
+    SLM_NODE_KIND_MEMORY = 4,
+    SLM_NODE_KIND_CLOCK = 5,
+    SLM_NODE_KIND_POLICY = 6,
+    SLM_NODE_KIND_COUNT = 7
+} slm_node_kind_t;
+
+AIOS_STATIC_ASSERT(SLM_NODE_KIND_COUNT == 7,
+    "Update SLM node kind users when enum changes");
+
+static inline bool slm_node_kind_valid(uint32_t kind) {
+    return kind > SLM_NODE_KIND_NONE && kind < SLM_NODE_KIND_COUNT;
+}
+
+typedef enum {
+    SLM_NODEBIT_ID_NONE = 0,
+    SLM_NODEBIT_ID_API_BOOTSTRAP = 1,
+    SLM_NODEBIT_ID_API_HW_SNAPSHOT = 2,
+    SLM_NODEBIT_ID_API_PLAN_SUBMIT = 3,
+    SLM_NODEBIT_ID_TOOL_DISCOVERY = 4,
+    SLM_NODEBIT_ID_DEVICE_ETHERNET = 5,
+    SLM_NODEBIT_ID_DEVICE_USB = 6,
+    SLM_NODEBIT_ID_DEVICE_STORAGE = 7,
+    SLM_NODEBIT_ID_MEMORY_FABRIC = 8,
+    SLM_NODEBIT_ID_CLOCK_PROFILE = 9,
+    SLM_NODEBIT_ID_POLICY_GATE = 10,
+    SLM_NODEBIT_ID_COUNT = 11
+} slm_nodebit_id_t;
+
+AIOS_STATIC_ASSERT(SLM_NODEBIT_ID_COUNT == 11,
+    "Update SLM NodeBit catalog when enum changes");
+AIOS_STATIC_ASSERT(SLM_NODEBIT_ID_COUNT <= SLM_NODEBIT_MAX_NODES,
+    "SLM NodeBit catalog exceeds snapshot capacity");
+
+typedef struct {
+    uint16_t vendor_id;
+    uint16_t device_id;
+    uint8_t class_code;
+    uint8_t subclass;
+    uint8_t prog_if;
+    uint8_t bus;
+    uint8_t slot;
+    uint8_t function;
+    uint8_t init_priority;
+    bool pcie_capable;
+    uint8_t pcie_link_speed;
+    uint8_t pcie_link_width;
+    platform_device_kind_t kind;
+} slm_hw_device_t;
+
+typedef struct {
+    uint8_t ready_controllers;
+    uint8_t degraded_controllers;
+    uint8_t pcie_io_devices;
+    slm_io_mode_t mode;
+    uint16_t recommended_queue_depth;
+    uint16_t recommended_poll_budget;
+    uint32_t recommended_dma_window_kib;
+} slm_io_profile_t;
+
+typedef struct {
+    bool acpi_ready;
+    bool xsdt_present;
+    bool mcfg_present;
+    bool madt_present;
+    bool ecam_available;
+    pci_cfg_access_mode_t pci_access_mode;
+    uint8_t pci_bus_start;
+    uint8_t pci_bus_end;
+    uint32_t pci_total_functions;
+    uint32_t pci_bridge_count;
+    uint32_t pci_pcie_functions;
+    uint32_t pci_msi_capable_functions;
+    uint32_t pci_msix_capable_functions;
+    uint8_t compatibility_score;
+} slm_fabric_profile_t;
+
+typedef struct {
+    uint32_t attempts;
+    uint32_t successes;
+    uint32_t failures;
+    uint32_t timeouts;
+    uint32_t rejections;
+    uint64_t last_latency_ns;
+    aios_status_t last_status;
+    uint8_t confidence;
+} slm_learning_entry_t;
+
+typedef struct {
+    uint32_t boot_epoch;
+    uint32_t observed_ready_controllers;
+    uint32_t applied_successes;
+    uint32_t applied_failures;
+    uint32_t rejected_submissions;
+    uint8_t global_confidence;
+    int8_t io_aggressiveness_bias;
+    uint16_t tuned_queue_depth;
+    uint16_t tuned_poll_budget;
+    uint32_t tuned_dma_window_kib;
+    slm_learning_entry_t actions[SLM_ACTION_COUNT];
+} slm_learning_profile_t;
+
+typedef struct {
+    uint8_t self_consistency;
+    uint8_t goal_continuity;
+    uint8_t memory_coherence;
+    uint8_t policy_stability;
+    uint8_t resource_reserve;
+    uint8_t safety_margin;
+    uint8_t novelty_pressure;
+    uint8_t prediction_error;
+    uint8_t unresolved_uncertainty;
+    uint8_t opportunity_gain;
+    uint8_t external_surprise;
+    uint8_t hypothesis_diversity_demand;
+    uint8_t static_score;
+    uint8_t chaos_score;
+    int16_t sco_x100;
+    agent_operator_mode_t mode;
+    uint8_t recommended_max_active_workers;
+    uint8_t memory_write_intensity_pct;
+    bool adapter_update_allowed;
+    bool memory_only_bias;
+} agent_main_ai_profile_t;
+
+typedef struct {
+    uint16_t recommended_worker_queue_depth;
+    uint16_t recommended_token_pipeline_depth;
+    uint16_t recommended_planner_fanout;
+    uint16_t recommended_microbatch_tokens;
+    uint16_t recommended_summary_interval_ms;
+    uint16_t recommended_memory_journal_batch;
+    uint16_t recommended_submit_ring_entries;
+    uint16_t recommended_completion_ring_entries;
+    uint32_t recommended_zero_copy_window_kib;
+    bool zero_copy_preferred;
+    bool shared_kv_preferred;
+    bool device_nodes_preferred;
+    bool shared_infer_ring_preferred;
+} agent_pipeline_profile_t;
+
+typedef struct {
+    uint8_t node_id;
+    agent_node_role_t role;
+    agent_model_class_t model_class;
+    uint8_t priority;
+    uint8_t budget_share;
+    bool active;
+    bool persistent;
+    bool zero_copy_preferred;
+} agent_tree_node_t;
+
+typedef struct {
+    uint32_t schema_version;
+    uint32_t struct_size;
+    uint32_t ready;
+    uint32_t source_namespace;
+    uint32_t source_id;
+    uint32_t source_kind;
+    uint32_t source_role;
+    uint32_t lifecycle_state;
+    uint32_t valid_flags;
+    uint32_t reserved0;
+    uint64_t source_instance;
+    uint64_t source_generation;
+    uint64_t sample_sequence;
+} slm_agent_source_snapshot_t;
+
+AIOS_STATIC_ASSERT(sizeof(slm_agent_source_snapshot_t) == 64U,
+    "SLM agent source snapshot layout changed; version it explicitly");
+
+typedef struct {
+    uint16_t node_id;
+    uint16_t parent_id;
+    slm_node_kind_t kind;
+    uint32_t flags;
+    uint32_t action_bits;
+    uint32_t allow_bits;
+    uint32_t observe_only_bits;
+    uint32_t risky_bits;
+    uint32_t required_capability_bits;
+    uint8_t health_score;
+    uint8_t access_score;
+    uint8_t latency_class;
+    uint8_t risk_level;
+} slm_nodebit_t;
+
+typedef struct {
+    uint16_t capability_flags;
+    uint8_t access_score;
+    uint8_t ready_controller_count;
+    uint8_t degraded_controller_count;
+    uint8_t pcie_io_device_count;
+    bool user_mode_ready;
+    bool direct_mmio_allowed;
+    bool mediated_io_required;
+    bool memory_only_recommended;
+    bool shared_ring_recommended;
+    bool zero_copy_recommended;
+    bool device_nodes_recommended;
+} slm_user_hw_access_profile_t;
+
+typedef struct {
+    uint64_t source_tsc_khz;
+    bool invariant_tsc;
+    boot_perf_tier_t tier;
+    uint8_t main_ai_pct;
+    uint8_t worker_pct;
+    uint8_t io_poll_pct;
+    uint8_t memory_pct;
+    uint8_t guardian_pct;
+    uint8_t reserve_pct;
+    uint16_t suggested_timeslice_us;
+    uint16_t suggested_io_poll_interval_us;
+} slm_clock_profile_t;
+
+typedef struct {
+    uint32_t abi_version;
+    uint32_t struct_size;
+    slm_runtime_state_t runtime_state;
+    aios_status_t runtime_status;
+    uint32_t policy_generation;
+    uint32_t nodebit_generation;
+    uint32_t nodebit_count;
+    uint32_t reserved0;
+    uint64_t ts_ns;
+    uint64_t tsc_khz;
+    bool invariant_tsc;
+    boot_perf_tier_t tier;
+    uint64_t memcpy_mib_per_sec;
+    uint32_t total_detected_devices;
+    uint32_t listed_devices;
+    kernel_stability_t health_level;
+    bool autonomy_allowed;
+    bool risky_io_allowed;
+    bool e1000_ready;
+    bool e1000_link_up;
+    bool e1000_rx_ready;
+    aios_status_t e1000_last_rx_status;
+    uint16_t e1000_last_rx_length;
+    uint32_t e1000_rx_poll_count;
+    uint32_t e1000_rx_frame_count;
+    uint32_t e1000_rx_drop_count;
+    bool usb_ready;
+    uint8_t usb_controller_kind;
+    bool storage_ready;
+    uint8_t storage_controller_kind;
+    slm_fabric_profile_t fabric_profile;
+    memory_fabric_profile_t memory_fabric;
+    slm_learning_profile_t learning_profile;
+    slm_io_profile_t io_profile;
+    ai_ring_runtime_snapshot_t ring_runtime;
+    agent_main_ai_profile_t main_ai_profile;
+    agent_pipeline_profile_t pipeline_profile;
+    slm_user_hw_access_profile_t user_hw_access;
+    slm_clock_profile_t clock_profile;
+    uint32_t agent_tree_nodes;
+    agent_tree_node_t agent_tree[AGENT_TREE_MAX_NODES];
+    slm_nodebit_t nodebits[SLM_NODEBIT_MAX_NODES];
+    slm_hw_device_t devices[SLM_HW_MAX_DEVICES];
+} slm_hw_snapshot_t;
+
+typedef struct {
+    slm_template_t template_id;
+    slm_action_t action;
+    uint16_t target_vendor_id;
+    uint16_t target_device_id;
+    platform_device_kind_t target_kind;
+    uint32_t risk_level;
+    uint16_t queue_depth_hint;
+    uint16_t poll_budget_hint;
+    uint32_t dma_window_kib_hint;
+    bool allow_apply;
+} slm_plan_request_t;
+
+typedef struct {
+    uint32_t plan_id;
+    slm_plan_request_t request;
+    slm_plan_state_t state;
+    aios_status_t last_status;
+    uint8_t expected_confidence;
+    uint8_t validation_score;
+    uint64_t created_ts_ns;
+    uint64_t applied_ts_ns;
+} slm_plan_t;
+
+typedef struct {
+    uint32_t count;
+    slm_plan_t plans[SLM_PLAN_CAP];
+} slm_plan_list_t;
+
+/* High-precision observation of the plan *apply* path. Every apply is
+ * timed with the TSC-backed monotonic clock; this rolls the timings up
+ * so the apply plane is observable through the shell / a syscall without
+ * walking the whole snapshot. Distinct from the per-action learning
+ * profile, which tracks confidence rather than latency distribution. */
+typedef struct {
+    uint32_t apply_ok;        /* applies that returned AIOS_OK */
+    uint32_t apply_failed;    /* applies that ran but failed */
+    uint32_t apply_rejected;  /* refused before running (gate/state) */
+    uint64_t last_latency_ns;
+    uint64_t min_latency_ns;  /* 0 until the first successful timing */
+    uint64_t max_latency_ns;
+    uint64_t total_latency_ns;
+    uint64_t tsc_khz;         /* clock source backing the ns timings */
+} slm_plan_observation_t;
+
+aios_status_t slm_orchestrator_init(void);
+aios_status_t slm_snapshot_read(slm_hw_snapshot_t *out);
+aios_status_t slm_agent_source_snapshot_read(
+    slm_agent_source_snapshot_t *out
+);
+bool slm_agent_source_snapshot_valid(
+    const slm_agent_source_snapshot_t *snapshot
+);
+aios_status_t slm_plan_submit(const slm_plan_request_t *req, uint32_t *plan_id_out);
+aios_status_t slm_plan_apply(uint32_t plan_id);
+aios_status_t slm_plan_get(uint32_t plan_id, slm_plan_t *out);
+aios_status_t slm_plan_list(slm_plan_list_t *out);
+aios_status_t slm_nodebit_lookup(uint16_t node_id, slm_nodebit_t *out);
+void slm_plan_observation_read(slm_plan_observation_t *out);
+aios_status_t slm_plan_apply_selftest(void);
+void slm_orchestrator_dump(void);
+
+#endif /* _AIOS_SLM_ORCHESTRATOR_H */

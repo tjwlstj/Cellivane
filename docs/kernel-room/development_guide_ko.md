@@ -1,0 +1,458 @@
+# AIOS Kernel Room 개발 가이드
+
+작성일: 2026-04-18
+재정비: 2026-08-10
+최종 갱신: 2026-10-08 (현재 전역 큐 링크만 정렬; v0.10 native/hosted 증거의 2026-09-13 검토 유지)
+
+> 이 가이드는 [AIOS Kernel Room 관리 모델](kernel_room_management_model_ko.md)을
+> 따른다. 정체성, 용어, 성숙도 또는 구현 순서가 충돌하면 정본을 우선한다.
+
+[CONSOLE_RUNTIME 서비스 수명 관리](../os/aios_service_lifecycle_guide_ko.md)는
+CLI와 별도 프로세스의 생존·시작·중지·재시작을 제공하는 SUPPORTING/PARTIAL 조각이다.
+별도 MAIN AI_SERVICE producer의 typed record와 명시적 Cell/Node binding은
+`DIRECT/PARTIAL`로 구현됐다. [Cell 수명 가이드](../os/aios_cell_lifecycle_guide_ko.md)의
+bounded Cell 1 관리 전이는 이전 v0.5 `cell-01`의 로컬 Linux·실제 모델 검증을 통과했다.
+
+## 목적
+
+Kernel Room 작업이 커널 작동 증명이나 enforcement 자체를 목표로 삼지 않고,
+`Room -> Cell -> Node -> NodeBit` 관리 계층을 작은 검증 조각으로 완성하도록 한다.
+그 결과는 AI가 작업 공간·상태·가능한 행동을 파악하고 사용자와 지속적으로
+상호작용하는 데 사용되어야 한다. 로컬 실행 효율도 이 목적의 한 축이며,
+상호작용을 성능 작업 뒤의 화면 꾸미기로 취급하지 않는다.
+[제품 방향 정본](../meta/aios_product_direction_ko.md)이 성공의 의미를,
+[성숙도 작업흐름](../meta/minimal_io_and_maturity_workflow_ko.md#serve-p0-current)이 전역 다음 작업을 소유한다.
+
+핵심 규칙은 다섯 가지다.
+
+1. 관리 모델과 커널 substrate를 분리한다.
+2. Cell/Node identity와 binding을 gate enforcement보다 먼저 고정한다.
+3. 기존 subsystem의 원본 상태와 Kernel Room 관리 record를 구분한다.
+4. `CURRENT`, `PARTIAL`, `SCAFFOLD`, `PLANNED`, `RESEARCH`를 섞지 않는다.
+5. 첫 구현은 management-only, read-only, fail-closed다.
+
+## 현재 출발점
+
+### `CURRENT`
+
+- `kernel/core/kernel_room.c`
+  - aggregate read-only `kernel_room_snapshot_read()`
+  - 9개 Axis Gate descriptor
+  - `[ROOM] snapshot`, `[ROOM] gates`
+- `kernel/include/kernel/kernel_room.h`
+  - 현재 aggregate snapshot과 gate public contract
+- `kernel/core/kernel_room_management.c`
+  - K1 immutable-after-init bounded hierarchy registry와 negative selftest
+  - exact `[ROOM] management hierarchy selftest PASS ...` producer
+- `kernel/include/kernel/kernel_room_management.h`
+  - schema 1의 Cell/Node/NodeBit typed record와 1024B snapshot contract
+- `kernel/runtime/slm_orchestrator.c` / `kernel/include/runtime/slm_orchestrator.h`
+  - exact-one active/persistent MAIN source와 64B producer-owned copied snapshot
+- `kernel/core/kernel_room_source_binding.c`
+  - K1 Node 101과 SLM MAIN을 묶는 immutable K2-a registry와 negative selftest
+- `kernel/include/kernel/kernel_room_source_binding.h`
+  - schema 1/256B binding snapshot, append-only namespace/kind/role/reject ID
+- `kernel/core/shell.c`
+  - `state room`과 별도 `state binding` exact read-only mirror
+- `kernel/runtime/ai_syscall.c`
+  - `SYS_INFO_ROOM` read-only surface
+
+### subsystem에서는 `CURRENT`, 관리 adapter로는 `SCAFFOLD`
+
+- Memory Fabric domain/window
+- SLM agent tree
+- runtime NodeBit capability table와 per-node stats
+- SLM NodeBit catalog와 generation
+- process/pipeline ownership, pressure/resource snapshot
+
+### K1 `CURRENT` (2026-08-11)
+
+- capacity 2/4/8의 Cell/Node/NodeBit registry
+- bootstrap Cell 1 + bound Node 1 + parent-bound typed NodeBit 2
+- schema/size/source/generation/parent validity와 immutable snapshot
+- duplicate/orphan/unknown/stale/overflow와 non-zero unused tail rejection
+- default full/minimal/storage-only와 max-smap minimal strict kernel, default/max-smap
+  strict shell 18/18 검증 및 structured summary export
+
+### bounded native K2-a `CURRENT` (2026-08-15)
+
+- SLM agent-tree MAIN의 전용 boot-local source instance/generation과 copied read API
+- K1 1024B ABI와 분리된 schema 1/256B, capacity 2 source-binding snapshot
+- canonical/source/binding generation 분리와 explicit namespace mapping
+- missing/duplicate/orphan/namespace/kind/role/instance/zero/rollback/stale/
+  init-order/schema/overflow/non-zero-tail rejection
+- exact `[ROOM] source binding selftest PASS ...`, structured
+  `kernel_room_binding`, `state binding` full-row 검증
+- `entry-AC < K1 management < K2 binding < aggregate ROOM` 부트 순서
+
+### H1 host-only contract/replay `CURRENT` (2026-09-03)
+
+- H1-a transport, H1-b bounded lifecycle replay와 12개 fixture, H1-c bundle/parity
+- 동일 run·exact SHA의 원격 Linux/Windows fixture·parity 세 job과 세 artifact 검증
+- [H1 원격 acceptance 증거 (§13.2)](../os/h1_binding_trace_replay_workplan_ko.md#132-2026-09-03-원격-acceptance-완료)를 따르며
+  live native producer 또는 H2 runtime 증거로 확대하지 않음
+
+### hosted bounded 구현과 전체 미완료 범위
+
+H2-a 초기화 로그·Linux-visible 하드웨어 inventory는 `PARTIAL`로 추가됐다.
+이 관측 기반의 실행 방법과 검증 범위는
+[유저스페이스 가이드](../os/aios_userspace_boot_hardware_guide_ko.md)를 따른다.
+아래 bound runtime·관리 계층 미완료 항목을 대신하지 않는다.
+고유 CLI와 사용자 요청 DNS·HTTP(S)도 이 실행 기반의 `SUPPORTING/PARTIAL` 확장이다.
+[CLI·인터넷 가이드](../os/aios_cli_internet_guide_ko.md)의 실제 I/O와 canonical binding을 구별한다.
+별도 MAIN producer와 hosted authority의 명시적 발견·결속·재결속 구현은 `PARTIAL`이다.
+[MAIN 서비스 가이드](../os/aios_agent_binding_guide_ko.md)가 실제 모델·수명·결속 증거를 소유한다.
+구현된 관측 조각은 [자원 관측 가이드](../os/aios_resource_observation_guide_ko.md)의
+명시적 MAIN/backend 관계와 개별 CPU/RSS·unattributed system PSI다. 자원 소유권은 별도다.
+보존된 CLI v0.7/session schema 7/source 31개, MAIN protocol/run schema 4/source 24개는
+`cell status/activate/deactivate`로 기존 Cell 1의 관리 상태를 다룬다(`PARTIAL`).
+MAIN 프로세스를 유지한 채 결속 신뢰를 무효화하며 재활성화 뒤 명시적 발견·재결속이
+필요하다. 이전 v0.5 `cell-01`의 로컬 Linux·실제 모델 검증을 통과했으며 Cell 수명 가이드에서 결과를 확인한다.
+hosted authority의 Cell/Node는 native K1과 같은 실행 instance가 아니며, 아래 전체
+Cell lifecycle·자원 귀속·principal 완료를 대신하지 않는다.
+
+현재 backend 자체 교체·종료의 관리와 MAIN 실행 결속은
+[backend 수명 가이드](../os/aios_backend_lifecycle_guide_ko.md)의 `PARTIAL` 구현이다.
+`backend status/start/stop/restart`와 receipt schema 2의 `backend_execution`을 제공하며
+`backend-02`에서 로컬 Linux·실제 모델·교체 후 요청 거부·명시적 복구·자원 관측·
+인터넷·정상 종료와 당시 소스 독립 재검증을 통과했다. `backend-02`는 보존된 소스의
+증거이며 이후 변경된 현재 소스의 실행 검증을 대신하지 않는다.
+이전 `cell-01`은 보존된 v0.5 소스의 증거다.
+
+- 동일 CLI의 보유 pidfd 복구를 넘는 CLI 소실·재부팅 뒤 복구와 전체 source/다중 Cell/native Cell lifecycle·reconciliation
+- 전체 H2 Linux-hosted source/runtime 및 H3 acceptance, 범용 설치/복구
+- runtime/SLM NodeBit projection
+- per-Cell/per-Node pressure와 resource ownership
+- principal/authorize와 Axis Gate enforcement
+
+기본 CLI 이미지의 반복 부팅·설정/history 보존은 별도
+[운영 이미지 가이드](../os/aios_operating_image_guide_ko.md)의 `SUPPORTING/PARTIAL`이다.
+`image-07`과 모델 포함 `model-image-05`의 실제 온라인·오프라인 cold boot, 별도 장애 복사본의
+동일 worker backend 복구·즉시 exit를 검증했다. 이 결과가 Kernel Room의 부팅 간 canonical 상태
+복원이나 native lifecycle을 구현한 것은 아니다.
+
+### `RESEARCH`
+
+- Orbit runtime
+- distributed Cell/Node mesh
+- 프랙탈·거리 기반 배치
+
+## 작업 전 분류
+
+Kernel Room 변경을 시작하기 전에 제품 결과, 관리 모델과의 관계
+(`DIRECT`/`SUPPORTING`/`ORTHOGONAL`/`RESEARCH`), 구현 성숙도를 각각 기록한다.
+관리 관계 분류는 제품 가치의 순위가 아니다. 요청의 구현 책임은 아래에서 고른다.
+
+### A. management model 변경
+
+- Cell/Node/NodeBit ID, record, binding, generation, validity
+- hierarchy snapshot과 verifier
+- source adapter와 ownership 관계
+
+이 가이드의 주 대상이다.
+
+### B. substrate 변경
+
+- process switching, storage, driver, MM, scheduler, hardening
+- 각 subsystem의 raw snapshot
+
+Kernel Room 입력을 개선할 수 있지만, 그 자체로 관리 모델을 승격하지 않는다.
+
+### C. transition/enforcement 변경
+
+- principal, authorize, per-syscall gate, apply, rollback
+
+관리 registry와 identity 계약 뒤의 단계다. Cell/Node 의미가 정해지지 않았다면 먼저
+enforcement를 구현하지 않는다.
+
+### D. 에이전트·사용자가 관리 계약을 소비하는 경로
+
+- 현재 작업 공간·대상·지원 행동과 관측 시점/유효성의 구조화된 제공
+- 제한된 기존 요청의 전송, 결과 확인, 사용자에게 상태·실패·다음 행동 설명
+- 사용자 중단이나 source 변경 뒤 후속 요청 중지와 명시적 복구 절차 안내
+
+새 관리 record를 만드는 일과 기존 record를 실제로 사용하는 일은 별도 증거다.
+현재 MAIN에는 제한된 환경 관측·문맥 전달과 UUID Task가 있다(`PARTIAL`).
+이전 대화·선택 workspace 자동 문맥과 CLI 소실/재부팅 뒤 재개는 없다. 보존된 실제 소비와
+Task fixture·한정 실제 모델 Task PASS 범위는 [환경 문맥 가이드](../os/aios_space_context_guide_ko.md)를 따른다.
+후속 검증은 AI에 실제 전달한 문맥의 출처·시점·유효성·범위, 소비자 identity/모델,
+입력 관측에 따른 답변/행동을 연결한다. 외부 자동 명령만으로 로컬 AI의 소비를 증명하지 않는다.
+runtime이 필요하면 `hosted/`가 소유하고 `tools/`는 시험 입력·독립 검증을 소유한다.
+NodeBit이나 Orbit를 화면 공간의 데이터 모델로 자동 채택하지 않는다.
+
+## 관리 record 규칙
+
+### Namespace
+
+- Cell, management Node, source Node, NodeBit의 ID 타입을 구분한다.
+- public numeric ID는 append-only로 유지한다.
+- 서로 다른 namespace의 숫자가 같다는 이유로 binding하지 않는다.
+- source binding은 `source_kind + source_id`처럼 명시적이어야 한다.
+
+### 관계
+
+- managed Node는 정확히 하나의 active Cell에 결속한다.
+- 아직 결속되지 않은 source는 `UNBOUND`로 관측하되 managed/bound count에서 제외한다.
+- NodeBit은 존재하는 managed Node를 가리켜야 한다.
+- duplicate, orphan, unknown source는 fail-closed다.
+
+### State와 validity
+
+- lifecycle, health, risk, resource, pressure, capability, eligibility를 한 scalar나
+  무구분 bitmap으로 합치지 않는다.
+- 각 필드는 source와 validity를 가져야 한다.
+- 값 0을 지원됨, 없음, 미관측의 세 의미로 동시에 사용하지 않는다.
+- pressure ranking과 eligibility bitmap은 별도 축으로 유지한다.
+
+### Versioning과 consistency
+
+- public snapshot은 `schema_version`, `struct_size`, `generation`을 가진다.
+- bounded capacity와 실제 count를 분리한다.
+- extension, truncation, stale generation을 검출할 수 있어야 한다.
+- current aggregate room snapshot은 multi-source atomic transaction이 아니다. 새로운
+  hierarchy snapshot이 best-effort이면 그렇게 기록하고, 강한 원자성을 주장하려면
+  writer가 참여하는 generation/seqlock 계약을 별도로 검증한다.
+
+## 파일 책임
+
+### `kernel/include/kernel/kernel_room.h`
+
+현재 aggregate snapshot과 gate descriptor ABI를 보존한다. management registry v0를
+같은 ABI에 무심코 끼워 넣지 않는다. 새 public record가 필요하면 별도 versioned contract로
+정의하고 기존 snapshot 호환성을 유지한다.
+
+### `kernel/core/kernel_room.c`
+
+현재 책임은 aggregate snapshot glue, static gate metadata, boot/dump 관측이다.
+이 파일에 다른 subsystem의 private state machine이나 lock을 옮기지 않는다.
+
+### `kernel/include/kernel/kernel_room_management.h`
+
+K1 public typed record와 1024B snapshot을 소유한다. Cell/Node/NodeBit의 namespace,
+append-only enum, record size static assert, capacity 2/4/8을 바꿀 때는 schema와 모든
+consumer를 함께 검토한다.
+
+### `kernel/core/kernel_room_management.c`
+
+K1 bootstrap identity/relation/generation과 immutable-after-init snapshot을 소유한다.
+여기에 external subsystem의 private state나 Axis Gate authorize를 넣지 않는다.
+
+아래 책임은 계속 분리한다.
+
+- registry가 소유하는 identity/relation/generation
+- subsystem adapter가 제공하는 copied read-only state
+- 후속 Axis Gate가 수행하는 transition/authorize
+
+### `kernel/include/kernel/kernel_room_source_binding.h`
+
+K2-a public namespace, semantic kind, role, lifecycle, reject reason과 정확히 256B인
+별도 snapshot을 소유한다. enum 값은 append-only이며 K1 header와 aggregate ABI에
+필드를 덧붙이지 않는다.
+
+### `kernel/core/kernel_room_source_binding.c`
+
+K1 copied snapshot과 SLM producer copied snapshot을 소비해 한 boot-local immutable
+binding을 만든다. 숫자가 같다는 이유로 cast하지 않고 각 namespace/kind/role을
+명시적으로 변환한다. refresh/reconcile, allocator, scheduler, authorize/apply를 넣지 않는다.
+
+### 기존 subsystem
+
+Memory Fabric, SLM, scheduler, resource, pressure, process, pipeline은 자기 mutable state의
+원본 소유자다. Kernel Room 때문에 private 배열을 외부에 노출하지 말고 bounded read API나
+명시적인 adapter를 사용한다.
+
+## 첫 수직 조각
+
+첫 조각은 `management_only read-only hierarchy registry v0`로 구현됐다.
+
+Cell table만 있는 상태는 이 조각의 완료가 아니다. 동일한 hierarchy snapshot에서
+`Cell 1개`, 그 Cell에 exact-one binding된 `managed Node 1개`, 그 Node를 부모로
+가리키는 typed `NodeBit 2개`를 함께 증명한다. 이후 adapter 단계는 이 최소
+계층을 새로 만드는 단계가 아니라 실제 source coverage를 확대하는 단계다.
+
+### 목표
+
+- bounded Room/Cell/Node/NodeBit record
+- typed namespace와 explicit source binding
+- boot-seeded Cell ID 1, exact-one binding을 가진 managed Node ID 101,
+  parent-bound typed NodeBit ID 1001/1002
+- schema/size/generation/validity
+- read-only hierarchy snapshot
+- `observation_only=1`, `management_only=1`
+
+### 금지
+
+- per-syscall Axis Gate enforcement
+- runtime/SLM NodeBit table 통합 또는 mutation
+- scheduler migration과 budget apply
+- allocator reserve/release/throttle
+- process principal 도입
+- Orbit scheduling
+
+### 최소 불변식
+
+- unique Cell/Node ID
+- managed Node 전부 exact-one Cell binding
+- NodeBit 전부 valid managed Node 참조
+- source namespace collision 없음
+- capacity overflow와 stale generation 거부
+- 사용하지 않는 capacity tail의 non-zero record 거부
+- 기존 aggregate Room marker와 ABI 유지
+
+## 관측과 검증
+
+새 관리 구조는 boot-observable이어야 하지만 marker를 만드는 것 자체가 목표는 아니다.
+marker는 hierarchy invariant를 증명해야 한다.
+
+현재 exact record:
+
+```text
+[ROOM] management hierarchy selftest PASS schema=1 struct_size=1024 generation=1 cells=1 nodes=1 bound_nodes=1 nodebits=2 bound_nodebits=2 source_valid=1 generation_valid=1 duplicate_rejected=1 orphan_rejected=1 unknown_rejected=1 stale_rejected=1 overflow_rejected=1 tail_rejected=1 observation_only=1 management_only=1
+```
+
+검증기는 최소한 아래 반례를 거부한다.
+
+- required record 누락, 중복, 순서 위반
+- 잘린 record와 예상하지 않은 필드 확장
+- duplicate Cell/Node ID
+- orphan Node와 unknown NodeBit target
+- namespace를 무시한 implicit binding
+- stale generation
+- capacity overflow 또는 dropped record
+- non-zero unused capacity tail
+- `observation_only=0`이나 `management_only=0`
+
+관측면 권장 순서:
+
+1. internal selftest
+2. exact boot marker
+3. structured boot summary의 별도 `kernel_room_management` field
+4. `state room`의 같은 의미 mirror
+5. 필요성이 증명된 뒤에만 read-only UAPI
+
+기존 `[ROOM] snapshot`, `[ROOM] gates`, `SYS_INFO_ROOM`은 새 hierarchy proof와 별개의
+호환 표면으로 유지한다.
+
+## K2 source adapter gate와 현재 경계
+
+native K2-a oracle은 아래 항목을 증명해 `CURRENT`가 됐다.
+
+- canonical Node/Cell kind와 source의 semantic kind가 일치한다.
+- source namespace와 ID는 typed이며 canonical ID와 분리된다.
+- source producer가 instance/generation을 직접 소유하고 copied read API로 제공한다.
+- init ordering과 immutable boot-local lifecycle 경계가 정의된다.
+- missing, duplicate, role mismatch, orphan, zero/regressed/stale generation을
+  fail-closed fixture로 거부한다.
+- binding record는 별도 bounded/versioned snapshot이며 K1 1024B ABI와 기존 aggregate
+  Room ABI를 변경하지 않는다.
+
+K2 semantic field/reject 의미는 substrate-neutral을 목표로 하며 native oracle의 실행
+증거와 별도 hosted MAIN의 실행 증거를 구분한다. Node 101 `AI_SERVICE`의 native
+reference는 구현된 exact-one active/persistent SLM agent-tree MAIN source다. Linux-hosted
+기본 delivery는 producer-owned service instance/generation을 가진 실제 userspace
+MAIN service record를 `PARTIAL`로 구현했다. 현재 SLM
+`policy_generation`은 agent-tree source generation 계약이 아니므로 재사용하지
+않는다. Linux PID/pidfd/cgroup/PSI는 service lifecycle/resource evidence일 뿐
+canonical Node identity가 아니다. Memory Fabric main domain은 Cell/resource source
+후보이고 bootstrap process는 execution-instance source 후보다. SLM MAIN 외의 source는
+구현이 쉽거나 숫자가 같다는 이유만으로 Node 101에 결속하지 않는다.
+
+작은 native K2 adapter는 canonical 의미가 Linux object 모양에 끌려가지 않게 하는
+semantic oracle/conformance proof로 구현됐다. 이 native adapter의 refresh/reconcile과
+source exit/recreate/rebind는 아직 `PLANNED`다. H1 verifier는 같은 field/reason 의미를
+OS-neutral trace와 12개 fixture에 고정했고 원격 exact-SHA acceptance를 통과했다. 광범위한 native
+process/storage 확장은 H2 observe-only userspace service의 선행조건이 아니다.
+
+## 관리 분야의 의존 순서
+
+아래는 분야별 의존 관계이며 전역 실행 큐가 아니다. 현재 다음 조각과 완료 기준은
+[성숙도 작업흐름의 현재 선택 조각](../meta/minimal_io_and_maturity_workflow_ko.md#serve-p0-current)을 따른다.
+그 흐름은 개발 `PARTIAL`이다. 한정 실제 모델 Task는 PASS이며 새 이미지 acceptance는 미완료다.
+보존된 실제 문맥 소비·Task fixture·후속 소스의 실행 증거를 합치지 않는다. 필요한 좁은 계약부터 검증하고 목록 전체의 확장을 선행조건으로 삼지 않는다.
+
+1. 정본과 typed namespace 대응표
+2. management-only hierarchy registry v0 — `CURRENT` (2026-08-11)
+3. bounded native K2-a semantic oracle — `CURRENT` (2026-08-15)
+4. H1 OS-neutral lifecycle trace/replay — `CURRENT` (2026-09-03)
+5. H2 Linux userspace adapter — bootstrap·MAIN 결속·자원 관측 `PARTIAL`, 전체 acceptance 후속
+6. Cell lifecycle/reconcile와 source coverage 확대 — hosted Cell 1 관리 전이 `PARTIAL`, v0.5 cell-01의 로컬 Linux·실제 모델 검증 통과
+7. runtime/SLM NodeBit의 typed management view와 generation 연결
+8. per-Cell/per-Node pressure·resource attribution observation
+9. principal과 state-transition request 계약
+10. Axis Gate authorize/enforcement + deny/rollback proof
+11. 선택적 Orbit 연구
+
+2단계의 완료 조건은 최소 Cell/Node/NodeBit 전체 hierarchy proof다. 3단계의 bounded
+oracle을 전체 K2 lifecycle 완료로 해석하거나, 4~6단계를 Cell-only -> Node-only ->
+NodeBit-only의 별도 완성 단계로 해석하지 않는다.
+
+`snapshot -> gate metadata -> enforcement`를 Kernel Room의 기본 성장 순서로 쓰지 않는다.
+현재 snapshot과 gate는 보존할 substrate이며, 다음 중심 순서는
+`identity -> relation -> state -> observation -> transition -> enforcement`다.
+
+에이전트 소비 흐름에서는 읽은 identity/generation, 요청 ID, 실제 결과와 에이전트가
+사용자에게 설명한 상태를 연결해 확인한다. 오래된 관계·미지원 행동·실패를 입력했을 때
+임의 셸, 자동 재결속, 성공 추정으로 빠져나오면 실패다. 사용자 중단 뒤 새 요청을
+내지 않는 증거와 이미 실행 중인 요청의 실제 취소·완료 여부를 구분한다. 현재 기능이
+취소를 제공하지 않으면 그 한계를 설명하며 취소 완료를 만들지 않는다.
+
+## Axis Gate 규칙
+
+현재 descriptor는 `CURRENT` classification metadata다. dispatcher가 per-call로 이를
+검사한다고 서술하지 않는다.
+
+후속 enforcement는 아래 조건이 모두 갖춰진 뒤에만 시작한다.
+
+- principal/caller identity
+- target managed Node와 Cell binding
+- NodeBit capability/validity/generation
+- Cell health/risk state
+- deny reason과 rollback boundary
+- bypass 불가를 증명하는 negative test
+
+Gate descriptor와 NodeBit은 같은 정책표가 아니다. Gate는 요청의 종류와 전이 경계를,
+NodeBit은 Node의 상태와 capability를 표현한다. 둘은 typed decision contract로 연결하되
+무조건 하나의 bitmap으로 합치지 않는다.
+
+## Orbit 규칙
+
+Orbit는 `RESEARCH`다. 다음이 생기기 전에는 runtime이나 ABI를 만들지 않는다.
+
+- 실제 Cell/Node hierarchy evidence
+- risk/latency/locality source와 validity
+- 기존 scheduler로 표현할 수 없는 구체적 요구
+- 비교 가능한 실험과 rollback 기준
+
+## 문서 동기화
+
+Kernel Room 문서를 바꿀 때는 아래 다섯 파일을 함께 확인한다.
+
+- `docs/kernel-room/kernel_room_management_model_ko.md`
+- `docs/kernel-room/README.md`
+- `docs/kernel-room/kernel_room_topology_ko.md`
+- `docs/kernel-room/development_guide_ko.md`
+- `docs/kernel-room/orbit_cell_node_feasibility_ko.md`
+
+구현이나 maturity가 바뀌는 후속 패치에서는 mirror 문서와 verifier를 같은 패치에서
+갱신한다.
+
+- `README.md`
+- `CLAUDE.md`
+- `PROJECT.md`
+- `docs/meta/codex_handoff_tips_ko.md`
+- 현재 roadmap
+- `tools/testkit` parser/verdict/summary/shell 문서
+
+## 완료 보고 규칙
+
+작업자는 다음을 분리해 보고한다.
+
+- 새로 `CURRENT`가 된 정확한 record와 verifier
+- 여전히 `PARTIAL`인 전체 모델
+- adapter만 있는 `SCAFFOLD`
+- 구현하지 않은 `PLANNED`
+- 선택적 `RESEARCH`
+- 실행하지 않은 검증 lane
+
+정상 부팅, marker 개수, process switching 또는 driver probe를 Cell/Node hierarchy가
+완성됐다는 증거로 사용하지 않는다.

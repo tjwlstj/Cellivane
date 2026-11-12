@@ -1,0 +1,248 @@
+{
+  "base_revision": "b89273b0e2cbb4ec7a61e1efb02f69beb1d529f1",
+  "build_receipt_sha256": "eec6484b42cb13f03e8fa3443c70897c059d9f3a0845ba82d0e1fe509d891ea1",
+  "claims": {
+    "fresh_revision_ci_run": false,
+    "gpu_tested": false,
+    "multiple_tensor_providers_tested": false,
+    "native_mtp": false,
+    "os_memory_limit_enforced": false,
+    "portable_speedup": false,
+    "quality_verified": false,
+    "speedup_guaranteed": false,
+    "weight_repacked": false
+  },
+  "config": {
+    "alias": "cellivane-runtime-target",
+    "batch": 128,
+    "context_tokens": 512,
+    "max_tokens": 64,
+    "mode_order": [
+      "none",
+      "murphy",
+      "murphy",
+      "none"
+    ],
+    "no_result_cache": true,
+    "placement": "cpu",
+    "rounds": 2,
+    "target_profile": "0.6b",
+    "threads": 4,
+    "warmup_max_tokens": 1
+  },
+  "date": "2026-10-15",
+  "engine_commit": "d81235049384534c167caea52b85a694f6103d14",
+  "http_bridge_observation": {
+    "bridge_probe_outcome": "CONFIRMED",
+    "bridge_request_outcome": "ANSWERED",
+    "computed_requests": 2,
+    "independent_tensor_or_protocol_replay_claimed": false,
+    "native_generations_including_warmup": 3,
+    "oversize_http_status": 400,
+    "owned_job_cleanup_confirmed": true,
+    "post_run_loopback_port_closed": true,
+    "rejected_before_native_dispatch": 1,
+    "report_sha256": "12e13a183cb5686c09d33739c60987f8db6aae7e389c69217b66f94ade7c7442",
+    "run_id": "e61f3a0a-f804-4bf6-a5e8-1c23dd1ecddc",
+    "scope": "actual-model-loopback-http-and-bridge-functional-observation",
+    "verdict": "PASS"
+  },
+  "independent_replay": {
+    "claims": {
+      "general_quality": false,
+      "kv_sharing": false,
+      "live_allocator_attestation": false,
+      "native_mtp": false,
+      "portable_speedup": false,
+      "token_text_independently_decoded": false,
+      "weight_repack": false
+    },
+    "discarded_warmups": 2,
+    "fresh_worker_phases": 4,
+    "measured_responses": 8,
+    "run_id": "5c92c4d2-888b-4deb-8141-c559b0af7e71",
+    "runtime_generations": 10,
+    "scope": "recorded-native-runtime-murphy-cpu-integrity-and-functional-replay",
+    "source_files_checked": 26,
+    "timing": {
+      "murphy": {
+        "completion_tokens": 16,
+        "measured_wall_s": 0.7679800000041723
+      },
+      "none": {
+        "completion_tokens": 16,
+        "measured_wall_s": 0.8103822999910335
+      }
+    },
+    "verdict": "PASS"
+  },
+  "memory_scope": "native-worker-lifetime-peak-only; excludes-Python-other-processes-GPU; not-page-residency-or-reservation",
+  "mode_totals": {
+    "murphy": {
+      "measured_wall_s": 0.7679800000041723,
+      "preparation_plus_measured_wall_s": 1.8120175000003655,
+      "preparation_s": 1.0440374999961932
+    },
+    "none": {
+      "measured_wall_s": 0.8103822999910335,
+      "preparation_plus_measured_wall_s": 1.7004135999886785,
+      "preparation_s": 0.890031299997645
+    }
+  },
+  "model": {
+    "basename": "Qwen3-0.6B-Q8_0.gguf",
+    "bytes": 639446688,
+    "sha256": "9465e63a22add5354d9bb4b99e90117043c7124007664907259bd16d043bb031"
+  },
+  "phases": [
+    {
+      "completion_tokens": 8,
+      "index": 0,
+      "load_wall_s": 0.491490899999917,
+      "measured_responses": 2,
+      "measured_wall_s": 0.4176867999995011,
+      "mode": "none",
+      "model_disposed": true,
+      "owned_job_cleanup_confirmed": true,
+      "preparation_s": 0.4914961999966181,
+      "prepare_function_wall_s": 5.299996701069176e-06,
+      "warmup_generations": 0,
+      "worker_exit_code": 0,
+      "worker_peak_working_set_bytes": 762384384
+    },
+    {
+      "completion_tokens": 8,
+      "index": 1,
+      "load_wall_s": 0.40842919999704463,
+      "measured_responses": 2,
+      "measured_wall_s": 0.3960556000020006,
+      "mode": "murphy",
+      "model_disposed": true,
+      "owned_job_cleanup_confirmed": true,
+      "preparation_s": 0.5245253999964916,
+      "prepare_function_wall_s": 0.11609619999944698,
+      "warmup_generations": 1,
+      "worker_exit_code": 0,
+      "worker_peak_working_set_bytes": 762183680
+    },
+    {
+      "completion_tokens": 8,
+      "index": 2,
+      "load_wall_s": 0.4026475999999093,
+      "measured_responses": 2,
+      "measured_wall_s": 0.37192440000217175,
+      "mode": "murphy",
+      "model_disposed": true,
+      "owned_job_cleanup_confirmed": true,
+      "preparation_s": 0.5195120999997016,
+      "prepare_function_wall_s": 0.11686449999979232,
+      "warmup_generations": 1,
+      "worker_exit_code": 0,
+      "worker_peak_working_set_bytes": 762396672
+    },
+    {
+      "completion_tokens": 8,
+      "index": 3,
+      "load_wall_s": 0.3985319999992498,
+      "measured_responses": 2,
+      "measured_wall_s": 0.3926954999915324,
+      "mode": "none",
+      "model_disposed": true,
+      "owned_job_cleanup_confirmed": true,
+      "preparation_s": 0.3985351000010269,
+      "prepare_function_wall_s": 3.1000017770566046e-06,
+      "warmup_generations": 0,
+      "worker_exit_code": 0,
+      "worker_peak_working_set_bytes": 762322944
+    }
+  ],
+  "publication_scope": "allowlisted-aggregate-only; no-private-paths-PIDs-raw-prompts-answers-logs-models-binaries",
+  "quality_observation": {
+    "arithmetic_numeric_value_correct": true,
+    "arithmetic_only_number_instruction_followed": false,
+    "exact_word_instruction_followed": true,
+    "general_quality_verified": false,
+    "same_raw_text_across_phases": true,
+    "two_fixed_inputs_only": true
+  },
+  "regression": {
+    "collected": 583,
+    "elapsed_s": 74.406,
+    "failed": 0,
+    "log_sha256": "6075e669003073a6b31f3209acfa99e635666acf283aa1dff15d8f781cfde37f",
+    "models_executed_by_unittests": false,
+    "native_protocol_selftest_enabled": true,
+    "passed": 583,
+    "scope": "local-windows-model-free-full-regression-record",
+    "skipped": 0,
+    "source_files_sha256": {
+      "hosted/experimental/cellivane_bridge/__init__.py": "954129f056e94ac20a0511dcf8deff8b2c1b3f45f4bc81ea1b5e208bc272ab10",
+      "hosted/experimental/cellivane_bridge/__main__.py": "935a1c1166b0c1ea35a82256345000bf2c73ded718d77773bc27a71ecce28f7d",
+      "hosted/experimental/cellivane_bridge/adapters.py": "b813cb2a875205dfb4278d4224fe7a416f8f391ee03b3b5726f8d8e5b0b21c46",
+      "hosted/experimental/cellivane_bridge/cli.py": "19dc4866abbaf091f8af720ce9bec1a5ca1f1527e0133454553b186bb60c361f",
+      "hosted/experimental/cellivane_bridge/contracts.py": "528bc419f960b0dcb2ba6ebc3e14ae02026173c97ed1035dfcd49db57217c5ff",
+      "hosted/experimental/cellivane_bridge/runtime.py": "8b366b6e146651f5fdefe1ac59da44109acea35c79176b107d61092828160695",
+      "hosted/experimental/cellivane_bridge/storage.py": "d4ece1ed296134be3df40c87372cb059c8b84e7b6a4391557652c159bd821d64",
+      "hosted/experimental/cellivane_runtime/__init__.py": "c6f704c1f5aee10bd95d38d98aa52182c687a607e892b6dfebda8288b8076b4f",
+      "hosted/experimental/cellivane_runtime/core.py": "079ff3b48cfab9701dfe2aa27f1392f6cc371bae0204f9f49563543ff2e9e1dd",
+      "hosted/experimental/cellivane_runtime/murphy.py": "78c16e2e52380ae2819523b974807c58b26a67154d0f0ee4f98c9a79d736785f",
+      "hosted/experimental/cellivane_seed/__init__.py": "ca0d15cbcac3fa9ad1043ae8dda1b97f2b2a3041d199b53be3a10b160473c08a",
+      "hosted/experimental/cellivane_seed/__main__.py": "540fd0a5992ca535482a9d44b2e268ce3a39bb47a0576f301214afa5ef4494b9",
+      "hosted/experimental/cellivane_seed/adaptive.py": "af60a8e404dd19076afe0cd374d978efb036a1f64d9e71b47ec559127d5f8516",
+      "hosted/experimental/cellivane_seed/capabilities.py": "0255363c01c5763f0888b166315be261297278d0809bf38ab617f78d1a1f79c1",
+      "hosted/experimental/cellivane_seed/core.py": "208dbf714ae1fdcc31d1bc46bbadf11daa9c7c9b31f74af9a315c8cb36d38f4b",
+      "hosted/experimental/cellivane_seed/ollama.py": "cde8ea6a3b172cf175989b1849d8e9728774439919573a2667de590f1eef12d0",
+      "hosted/experimental/cellivane_seed/placement.py": "4fc8d0bc8a17287b19fef27eb5bd34a041949a6375a9e9d9752bbafab84fc38d",
+      "hosted/experimental/cellivane_seed/profiles.py": "18be1f04afb6b601b87d161287eadab3153c62004372df4b312227df0b2c0ace",
+      "hosted/experimental/cellivane_seed/resources.py": "edaa50d98a510f66b20bed729c87cbee21883ab04ac791241551bf238241dce0",
+      "hosted/experimental/cellivane_seed/server.py": "899b1370211a637b84c5c3231eb99a531d8743ad427f7d17e458ae3696841335",
+      "native/cellivane_runtime/worker.cpp": "779d5d7b92a8c3dd940d4acad4b3538bafea45afe474d6f0fed4ff6087198a40",
+      "tools/hosted/build_cellivane_runtime.py": "75f8ecb63333c4265bfb0fff8db8c5f735a8a52532b85f6a8f7668a7478f09b8",
+      "tools/hosted/cellivane_bridge_lab.py": "46b5416ff5f80d14b25569dbd337ece96ba90cc02ffcfe3c6360d0f3d3af2991",
+      "tools/hosted/cellivane_llama_assets.py": "503e1fefea32c2b13813f326b1d15a3c5ecbab2b54576150c02e34db5af9ffc1",
+      "tools/hosted/cellivane_runtime_lab.py": "a3980c96ba54cd3ce6cd12beb42f8ff820998a22098d674d324aa9b704fdce23",
+      "tools/hosted/cellivane_runtime_transport.py": "17c2662e1ca7c95fd1f689ea529b6d8161e1e61dbadd0ae21aedaabcbb7294f6"
+    },
+    "test_files_sha256": {
+      "tools/hosted/tests/test_cellivane_adaptive.py": "fc6591dda0f92688a2ac051b036f338752e998735a6765d277ce7b5b4dcbdf28",
+      "tools/hosted/tests/test_cellivane_adaptive_launcher.py": "ec490106940709d6c26b96c5e16a678b1f53782cb2546529ed00356a77207624",
+      "tools/hosted/tests/test_cellivane_adaptive_replay.py": "371ccbf9f02cd44f286efa1b4d2943679e87d09b6c773430e071880409a72b92",
+      "tools/hosted/tests/test_cellivane_bridge_adapters.py": "5f4a7846d61fa504bcf4fc6d6d675fa1ff245d551784e9ce30a15ec863d8df87",
+      "tools/hosted/tests/test_cellivane_bridge_lab.py": "6e0236b8264cd0083e09d011392670ef0518f3a3b9172c06ddec82c48c00be53",
+      "tools/hosted/tests/test_cellivane_bridge_lifecycle.py": "0bd3ebe9dfe2cc14bc177967610d22b1c117e3240cc3cef8ec475734123a9e81",
+      "tools/hosted/tests/test_cellivane_bridge_runtime.py": "67ee8a63ffa1229105eba5087a908dba896534ed0505ef724924786a9989414b",
+      "tools/hosted/tests/test_cellivane_bridge_verifier.py": "9616f197b08b830910384340044c44ebb0283b4b3009f3c2a53d677ae88e4906",
+      "tools/hosted/tests/test_cellivane_capabilities.py": "50bb36776a62f9c0d3c3988165e5a23ecba08ece318d3b5d599f0c81d8e9bc52",
+      "tools/hosted/tests/test_cellivane_comparison_verifier.py": "fe3f9457631bd5a4eddb59d51cb1aa26c06fc8c816b08070c7949dfd15a66aeb",
+      "tools/hosted/tests/test_cellivane_placement.py": "6b92ec4f5f3cd13cf0a0305b68370910178a7ca3fbfc7719d701f760e2537d85",
+      "tools/hosted/tests/test_cellivane_profiles.py": "8c47cf00ddabf48f58ce2aee1d40bf7bf374b8820eb8e5036a3690e00e29b17c",
+      "tools/hosted/tests/test_cellivane_resources.py": "b774434d1a19604e2e7ed1121136f54f16e7ccee0b3418e06c2330e247477578",
+      "tools/hosted/tests/test_cellivane_runtime.py": "3c652bddcd9105a333a91c031c4b8c4af3372bf60e4f9237d0f62dd762cacf06",
+      "tools/hosted/tests/test_cellivane_runtime_build.py": "063075ac4dfe11b0be96136921f642111216f6224c905ce4e65f9676a1c239d7",
+      "tools/hosted/tests/test_cellivane_runtime_lab.py": "cedb8f64c19a3c9db3ea5ea524e3799484f812e6d849b94e70a137c938170bfc",
+      "tools/hosted/tests/test_cellivane_runtime_transport.py": "8d0c36a818ee7e85910c4b02e50d6cc2972c292f9f40292f615c0b7ecaca3714",
+      "tools/hosted/tests/test_cellivane_runtime_verifier.py": "b2c76e8e3ef38393f2001946f9001b48488d0d8404489e8811dc10e014d149b4",
+      "tools/hosted/tests/test_cellivane_seed_assets.py": "cd1f2e26d0e7044c628ff1aa7dc104371fd041185e680f79e03ba950b2bdbb78",
+      "tools/hosted/tests/test_cellivane_seed_compare.py": "d9cfb2430f3e1fcc548df300890dad15c6f5f8bad34603464e27835a104c364e",
+      "tools/hosted/tests/test_cellivane_seed_core.py": "c2f97128ddeb9a641b6c8d3c92a6e46ca5ed2472acc58149fb2a4251a721f473",
+      "tools/hosted/tests/test_cellivane_seed_lab.py": "5046fca828f46416c4641bdbb644382c670e854427eee6ff62947cc4aa2b3389",
+      "tools/hosted/tests/test_cellivane_seed_ollama.py": "a071e243c07671ed4125228101daa71b73a580f52932d7c716289786dc932cef",
+      "tools/hosted/tests/test_cellivane_seed_plan.py": "465544d81911ea16294879519aba11ba6f55e5dbdebe51c31a0a404cef6886b2",
+      "tools/hosted/tests/test_cellivane_seed_server.py": "45a425e39a404db112b67bbc29c7998aa9bd4654f3268bbc35910baa7f0ac8cd",
+      "tools/hosted/tests/test_cellivane_seed_speculate.py": "905421d257a17fc5c90f9ebb45bf59e98007fdf392e83859e43ffabd2949235c",
+      "tools/hosted/tests/test_cellivane_seed_verifier.py": "c6d0cf6f1fdc289a6f3f7301325c37172c96e35039c845e94f0ae5c01882f325",
+      "tools/hosted/tests/test_cellivane_speculation_verifier.py": "776f4be80dac9d1618a101e1b728dc16aea147bff312f8f95e084d21093c8cf7"
+    },
+    "verifier_files_sha256": {
+      "tools/hosted/verify_cellivane_runtime.py": "afc80f070a8d4bf9577bba565b8b74a8596852ca3bfd18050714f257224295c3"
+    }
+  },
+  "report_sha256": "f886b8807eb7be5518344e8caa3b0a5fb1abe78e04cd7e66203565484974c8c5",
+  "run_id": "5c92c4d2-888b-4deb-8141-c559b0af7e71",
+  "schema_version": 1,
+  "scope": "local-experimental-runtime-murphy-cpu-functional-observation",
+  "source_state": "local-uncommitted-implementation-identified-by-file-hashes",
+  "timing_scope": "four-fresh-worker-phases-two-fixed-prompts-per-phase; native-command-wall-includes-synchronous-evidence-IO; file-hashing-warms-OS-cache; no-cold-load-or-general-speedup-claim",
+  "verdict_sha256": "6463bfbf226a044e765779ba2a0fce1a7a9b02f4d366b9815421dea09ffa3570",
+  "worker_sha256": "1623bd2f72a38a2279a9b46f01c6f49e28f535d641560739d4d2a81d70289d32"
+}

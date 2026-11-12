@@ -1,0 +1,333 @@
+/*
+ * AIOS Kernel - Minimal USB Host Bootstrap
+ * AI-Native Operating System
+ */
+
+#include <drivers/usb_host.h>
+#include <drivers/platform_probe.h>
+#include <drivers/pci_core.h>
+#include <drivers/serial.h>
+#include <drivers/vga.h>
+#include <lib/string.h>
+
+typedef struct {
+    bool present;
+    bool ready;
+    usb_host_controller_kind_t controller_kind;
+    uint8_t prog_if;
+    uint8_t bus;
+    uint8_t slot;
+    uint8_t function;
+    uint16_t vendor_id;
+    uint16_t device_id;
+    uint16_t io_base;
+    uint64_t mmio_base;
+    uint32_t pci_command;
+    uint8_t cap_length;
+    uint16_t hci_version;
+    uint8_t max_ports;
+    uint8_t max_slots;
+    bool capability_valid;
+    aios_status_t last_init_status;
+} usb_host_state_t;
+
+static usb_host_state_t g_usb_host = {0};
+
+static inline uint8_t mmio_read8(uint64_t base, uint32_t offset) {
+    volatile uint8_t *mmio = (volatile uint8_t *)(uintptr_t)(base + offset);
+    return *mmio;
+}
+
+static inline uint16_t mmio_read16(uint64_t base, uint32_t offset) {
+    volatile uint16_t *mmio = (volatile uint16_t *)(uintptr_t)(base + offset);
+    return *mmio;
+}
+
+static inline uint32_t mmio_read32(uint64_t base, uint32_t offset) {
+    volatile uint32_t *mmio = (volatile uint32_t *)(uintptr_t)(base + offset);
+    return *mmio;
+}
+
+static usb_host_controller_kind_t classify_controller(uint8_t prog_if,
+                                                      const char **label) {
+    switch (prog_if) {
+        case 0x00:
+            *label = "UHCI";
+            return USB_HOST_CONTROLLER_UHCI;
+        case 0x10:
+            *label = "OHCI";
+            return USB_HOST_CONTROLLER_OHCI;
+        case 0x20:
+            *label = "EHCI";
+            return USB_HOST_CONTROLLER_EHCI;
+        case 0x30:
+            *label = "XHCI";
+            return USB_HOST_CONTROLLER_XHCI;
+        default:
+            *label = "USB";
+            return USB_HOST_CONTROLLER_NONE;
+    }
+}
+
+static int32_t usb_host_candidate_score(const platform_device_t *dev,
+                                        usb_host_controller_kind_t kind) {
+    int32_t score = 0;
+
+    switch (kind) {
+        case USB_HOST_CONTROLLER_XHCI: score += 120; break;
+        case USB_HOST_CONTROLLER_EHCI: score += 100; break;
+        case USB_HOST_CONTROLLER_OHCI: score += 80; break;
+        case USB_HOST_CONTROLLER_UHCI: score += 70; break;
+        default: score += 30; break;
+    }
+
+    score += (int32_t)dev->mmio_bar_count * 8;
+    score += (int32_t)dev->io_bar_count * 6;
+    score += (int32_t)dev->bar_count * 2;
+
+    if (dev->pcie_capable) {
+        score += 6;
+    }
+    if (dev->msix_capable) {
+        score += 4;
+    } else if (dev->msi_capable) {
+        score += 2;
+    }
+    if (dev->has_64bit_bar) {
+        score += 2;
+    }
+
+    if (kind == USB_HOST_CONTROLLER_XHCI && dev->mmio_bar_count == 0) {
+        score -= 40;
+    } else if ((kind == USB_HOST_CONTROLLER_EHCI ||
+                kind == USB_HOST_CONTROLLER_OHCI) &&
+               dev->mmio_bar_count == 0 &&
+               dev->io_bar_count == 0) {
+        score -= 24;
+    } else if (kind == USB_HOST_CONTROLLER_UHCI && dev->io_bar_count == 0) {
+        score -= 16;
+    }
+
+    if (dev->bar_count == 0) {
+        score -= 24;
+    }
+
+    return score;
+}
+
+static bool usb_host_candidate_better(const platform_device_t *dev,
+                                      int32_t score,
+                                      const platform_device_t *best,
+                                      int32_t best_score) {
+    if (!best) {
+        return true;
+    }
+    if (score != best_score) {
+        return score > best_score;
+    }
+    if (dev->pcie_capable != best->pcie_capable) {
+        return dev->pcie_capable;
+    }
+    if (dev->mmio_bar_count != best->mmio_bar_count) {
+        return dev->mmio_bar_count > best->mmio_bar_count;
+    }
+    if (dev->io_bar_count != best->io_bar_count) {
+        return dev->io_bar_count > best->io_bar_count;
+    }
+    if (dev->bus != best->bus) {
+        return dev->bus < best->bus;
+    }
+    if (dev->slot != best->slot) {
+        return dev->slot < best->slot;
+    }
+    return dev->function < best->function;
+}
+
+static void usb_host_probe_xhci_caps(void) {
+    if (g_usb_host.controller_kind != USB_HOST_CONTROLLER_XHCI ||
+        g_usb_host.mmio_base == 0) {
+        return;
+    }
+
+    g_usb_host.cap_length = mmio_read8(g_usb_host.mmio_base, 0x00);
+    g_usb_host.hci_version = mmio_read16(g_usb_host.mmio_base, 0x02);
+
+    uint32_t hcsparams1 = mmio_read32(g_usb_host.mmio_base, 0x04);
+    g_usb_host.max_slots = (uint8_t)(hcsparams1 & 0xFF);
+    g_usb_host.max_ports = (uint8_t)((hcsparams1 >> 24) & 0xFF);
+    g_usb_host.capability_valid = (g_usb_host.cap_length >= 0x20);
+}
+
+aios_status_t usb_host_init(void) {
+    memset(&g_usb_host, 0, sizeof(g_usb_host));
+
+    const platform_device_t *candidate = NULL;
+    int32_t candidate_score = 0;
+    uint32_t candidate_count = 0;
+    for (uint32_t i = 0; i < platform_probe_count(); i++) {
+        const platform_device_t *dev = platform_probe_get(i);
+        if (!dev || dev->kind != PLATFORM_DEVICE_USB) {
+            continue;
+        }
+
+        const char *controller_label = NULL;
+        usb_host_controller_kind_t controller_kind = classify_controller(dev->prog_if,
+            &controller_label);
+        int32_t score = usb_host_candidate_score(dev, controller_kind);
+
+        candidate_count++;
+        if (usb_host_candidate_better(dev, score, candidate, candidate_score)) {
+            candidate = dev;
+            candidate_score = score;
+        }
+    }
+
+    if (!candidate) {
+        g_usb_host.last_init_status = AIOS_ERR_NODEV;
+        kprintf("    No USB host controller found.\n");
+        serial_write("[USB] No USB host controller found\n");
+        return AIOS_OK;
+    }
+
+    g_usb_host.present = true;
+    g_usb_host.bus = candidate->bus;
+    g_usb_host.slot = candidate->slot;
+    g_usb_host.function = candidate->function;
+    g_usb_host.vendor_id = candidate->vendor_id;
+    g_usb_host.device_id = candidate->device_id;
+    g_usb_host.prog_if = candidate->prog_if;
+
+    const char *label = NULL;
+    g_usb_host.controller_kind = classify_controller(candidate->prog_if, &label);
+
+    kprintf("    USB bootstrap select: %s score=%d choices=%u pci=%u:%u.%u\n",
+        (uint64_t)(uintptr_t)label,
+        (int64_t)candidate_score,
+        (uint64_t)candidate_count,
+        (uint64_t)candidate->bus,
+        (uint64_t)candidate->slot,
+        (uint64_t)candidate->function);
+    serial_printf("[USB] Selected bootstrap candidate=%s score=%d candidates=%u pci=%u:%u.%u mmio_bars=%u io_bars=%u pcie=%u\n",
+        (uint64_t)(uintptr_t)label,
+        (int64_t)candidate_score,
+        (uint64_t)candidate_count,
+        (uint64_t)candidate->bus,
+        (uint64_t)candidate->slot,
+        (uint64_t)candidate->function,
+        (uint64_t)candidate->mmio_bar_count,
+        (uint64_t)candidate->io_bar_count,
+        candidate->pcie_capable ? 1ULL : 0ULL);
+
+    g_usb_host.pci_command = pci_enable_device(g_usb_host.bus, g_usb_host.slot,
+        g_usb_host.function, true, true, true);
+
+    for (uint8_t i = 0; i < PCI_BAR_COUNT; i++) {
+        pci_bar_t bar;
+        if (pci_read_bar(g_usb_host.bus, g_usb_host.slot, g_usb_host.function, i, &bar) != AIOS_OK ||
+            !bar.present) {
+            continue;
+        }
+
+        if (bar.io_space && g_usb_host.io_base == 0) {
+            g_usb_host.io_base = (uint16_t)bar.base;
+        } else if (bar.mem_space && g_usb_host.mmio_base == 0) {
+            g_usb_host.mmio_base = bar.base;
+        }
+
+        if (bar.is_64bit && i + 1 < PCI_BAR_COUNT) {
+            i++;
+        }
+    }
+
+    g_usb_host.ready = (g_usb_host.mmio_base != 0 || g_usb_host.io_base != 0);
+    g_usb_host.last_init_status = g_usb_host.ready ? AIOS_OK : AIOS_ERR_IO;
+
+    if (g_usb_host.ready) {
+        usb_host_probe_xhci_caps();
+    }
+
+    kprintf("    USB %s host: pci=%u:%u cmd=0x%x mmio=0x%x io=0x%x\n",
+        (uint64_t)(uintptr_t)label,
+        (uint64_t)g_usb_host.bus,
+        (uint64_t)g_usb_host.slot,
+        (uint64_t)g_usb_host.pci_command,
+        (uint64_t)g_usb_host.mmio_base,
+        (uint64_t)g_usb_host.io_base);
+    serial_printf("[USB] %s ready=%u vendor=%x device=%x pci=%u:%u cmd=%x mmio=%x io=%x\n",
+        (uint64_t)(uintptr_t)label,
+        g_usb_host.ready ? 1ULL : 0ULL,
+        (uint64_t)g_usb_host.vendor_id,
+        (uint64_t)g_usb_host.device_id,
+        (uint64_t)g_usb_host.bus,
+        (uint64_t)g_usb_host.slot,
+        (uint64_t)g_usb_host.pci_command,
+        (uint64_t)g_usb_host.mmio_base,
+        (uint64_t)g_usb_host.io_base);
+    if (g_usb_host.controller_kind == USB_HOST_CONTROLLER_XHCI) {
+        serial_printf("[USB] XHCI caps valid=%u caplen=%u version=%x slots=%u ports=%u\n",
+            g_usb_host.capability_valid ? 1ULL : 0ULL,
+            (uint64_t)g_usb_host.cap_length,
+            (uint64_t)g_usb_host.hci_version,
+            (uint64_t)g_usb_host.max_slots,
+            (uint64_t)g_usb_host.max_ports);
+    }
+
+    return AIOS_OK;
+}
+
+bool usb_host_ready(void) {
+    return g_usb_host.ready;
+}
+
+aios_status_t usb_host_info(usb_host_info_t *out) {
+    if (!out) {
+        return AIOS_ERR_INVAL;
+    }
+
+    out->present = g_usb_host.present;
+    out->ready = g_usb_host.ready;
+    out->controller_kind = g_usb_host.controller_kind;
+    out->prog_if = g_usb_host.prog_if;
+    out->bus = g_usb_host.bus;
+    out->slot = g_usb_host.slot;
+    out->function = g_usb_host.function;
+    out->vendor_id = g_usb_host.vendor_id;
+    out->device_id = g_usb_host.device_id;
+    out->io_base = g_usb_host.io_base;
+    out->mmio_base = g_usb_host.mmio_base;
+    out->pci_command = g_usb_host.pci_command;
+    out->cap_length = g_usb_host.cap_length;
+    out->hci_version = g_usb_host.hci_version;
+    out->max_ports = g_usb_host.max_ports;
+    out->max_slots = g_usb_host.max_slots;
+    out->capability_valid = g_usb_host.capability_valid;
+    out->last_init_status = g_usb_host.last_init_status;
+    return AIOS_OK;
+}
+
+void usb_host_dump(void) {
+    if (!g_usb_host.present) {
+        serial_write("[USB] Host dump: controller not present\n");
+        return;
+    }
+
+    serial_printf("[USB] dump type=%u ready=%u vendor=%x device=%x pci=%u:%u mmio=%x io=%x\n",
+        (uint64_t)g_usb_host.controller_kind,
+        g_usb_host.ready ? 1ULL : 0ULL,
+        (uint64_t)g_usb_host.vendor_id,
+        (uint64_t)g_usb_host.device_id,
+        (uint64_t)g_usb_host.bus,
+        (uint64_t)g_usb_host.slot,
+        (uint64_t)g_usb_host.mmio_base,
+        (uint64_t)g_usb_host.io_base);
+    serial_printf("[USB] caps valid=%u caplen=%u version=%x slots=%u ports=%u\n",
+        g_usb_host.capability_valid ? 1ULL : 0ULL,
+        (uint64_t)g_usb_host.cap_length,
+        (uint64_t)g_usb_host.hci_version,
+        (uint64_t)g_usb_host.max_slots,
+        (uint64_t)g_usb_host.max_ports);
+    serial_printf("[USB] last_init_status=%d\n",
+        (int64_t)g_usb_host.last_init_status);
+}
+
+__asm__(".section .note.GNU-stack,\"\",@progbits\n\t.previous");

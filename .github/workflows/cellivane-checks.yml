@@ -1,0 +1,42 @@
+name: Cellivane workspace and Seed
+
+on:
+  push:
+    branches: [beta, main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  workspace:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Developer environment
+        run: python -B tools/workspace/doctor.py
+      - name: Workspace guard tests
+        run: python -B -m unittest discover -s tools/workspace/tests -p "test_*.py" -v
+      - name: Public source audit
+        run: python -B tools/workspace/public_audit.py
+  seed:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Independent Seed fixtures
+        working-directory: components/seed
+        run: python -B -m unittest discover -s tools/hosted/tests -p "test_cellivane_*.py" -v

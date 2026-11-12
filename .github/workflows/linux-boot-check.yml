@@ -1,0 +1,273 @@
+name: Linux Boot Check
+
+on:
+  push:
+    branches:
+      - main
+      - beta
+  pull_request:
+
+jobs:
+  static-analysis:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install cppcheck
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cppcheck
+
+      - name: Run cppcheck (kernel domain)
+        run: |
+          cppcheck --std=c11 --platform=unix64 \
+            --enable=warning,performance,portability \
+            --inline-suppr \
+            --suppress=missingIncludeSystem \
+            --error-exitcode=1 \
+            -Ikernel/include kernel/
+
+  os-tools-matrix:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+
+      - name: Validate Linux substrate resource policy
+        run: python tools/platform/linux_resource_guard.py
+
+      - name: Run platform resource guard tests
+        run: python -m unittest discover -s tools/platform/tests -p "test_*.py" -v
+
+      - name: Run hosted contracts and userspace tests (fail closed)
+        run: python -m unittest discover -s tools/hosted/tests -p "test_*.py" -v
+
+      - name: Run isolated research contracts (no model execution)
+        run: python -B -m unittest discover -s tools/research/tests -p "test_*.py" -v
+
+      - name: Exercise research rules and independently replay artifacts
+        run: |
+          python -B tools/research/self_reference_lab.py --rules-only --artifacts build/self-reference-ci
+          python -B tools/research/self_reference_replay.py --artifacts build/self-reference-ci
+
+      - name: Upload research rules evidence (not model or native AIOS acceptance)
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: self-reference-rules-${{ matrix.os }}
+          path: build/self-reference-ci/
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Run AIOS userspace boot and hardware observation (Linux only)
+        if: runner.os == 'Linux'
+        run: python tools/hosted/boot_smoke.py --artifact-dir build/hosted-boot/ci
+
+      - name: Upload AIOS userspace boot evidence
+        if: always() && runner.os == 'Linux'
+        uses: actions/upload-artifact@v7
+        with:
+          name: hosted-boot-Linux
+          path: build/hosted-boot/ci/
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Run OS tool smoke
+        run: python tools/testkit/aios-testkit.py os
+
+      - name: Upload OS tool artifacts
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: os-tool-artifacts-${{ matrix.os }}
+          path: |
+            kernel/build/tool-smoke/summary.json
+            kernel/build/tool-smoke/static-chaos-score.json
+            kernel/build/tool-smoke/memory_journal.jsonl
+            kernel/build/tool-smoke/adapter_candidates.jsonl
+          if-no-files-found: warn
+
+  hosted-binding-trace-fixtures-ubuntu:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+
+      - name: Run hosted binding-trace fixture manifest (fail closed)
+        run: >-
+          python tools/hosted/binding_trace_replay.py
+          --fixture-manifest hosted/contracts/fixtures/manifest.json
+          --artifact-dir build/hosted-binding-trace/Linux
+          --json
+
+      - name: Upload Linux binding-trace bundle
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: hosted-binding-trace-Linux
+          path: build/hosted-binding-trace/Linux/
+          if-no-files-found: error
+          retention-days: 30
+
+  hosted-binding-trace-fixtures-windows:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+
+      - name: Run hosted binding-trace fixture manifest (fail closed)
+        run: >-
+          python tools/hosted/binding_trace_replay.py
+          --fixture-manifest hosted/contracts/fixtures/manifest.json
+          --artifact-dir build/hosted-binding-trace/Windows
+          --json
+
+      - name: Upload Windows binding-trace bundle
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: hosted-binding-trace-Windows
+          path: build/hosted-binding-trace/Windows/
+          if-no-files-found: error
+          retention-days: 30
+
+  hosted-binding-trace-parity:
+    needs:
+      - hosted-binding-trace-fixtures-ubuntu
+      - hosted-binding-trace-fixtures-windows
+    if: ${{ always() && !cancelled() }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+
+      - name: Download Linux binding-trace bundle
+        uses: actions/download-artifact@v8
+        with:
+          name: hosted-binding-trace-Linux
+          path: build/hosted-binding-trace/download/Linux
+          digest-mismatch: error
+
+      - name: Download Windows binding-trace bundle
+        if: ${{ always() && !cancelled() }}
+        uses: actions/download-artifact@v8
+        with:
+          name: hosted-binding-trace-Windows
+          path: build/hosted-binding-trace/download/Windows
+          digest-mismatch: error
+
+      - name: Compare Linux and Windows binding-trace bundles
+        if: ${{ always() && !cancelled() }}
+        run: >-
+          python tools/hosted/binding_trace_replay.py
+          --compare-fixture-bundles
+          build/hosted-binding-trace/download/Linux
+          build/hosted-binding-trace/download/Windows
+          --artifact-dir build/hosted-binding-trace/parity
+          --json
+
+      - name: Upload binding-trace parity verdict
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: hosted-binding-trace-parity
+          path: build/hosted-binding-trace/parity/
+          if-no-files-found: error
+          retention-days: 30
+
+  build-and-boot:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+
+      - name: Run testkit host unit tests
+        run: python -m unittest discover -s tools/testkit/tests -t tools/testkit -p "test_*.py" -v
+
+      - name: Run PowerShell verdict selftest
+        shell: pwsh
+        run: ./tools/testkit/tests/test_build_windows_verdict.ps1
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            nasm \
+            gcc \
+            binutils \
+            qemu-system-x86 \
+            grub-pc-bin \
+            xorriso \
+            mtools
+
+      - name: Run all-in-one kernel + OS smoke
+        run: python tools/testkit/aios-testkit.py all --strict
+
+      - name: Run interactive shell lane
+        run: python tools/testkit/aios-testkit.py shell --strict --skip-build
+
+      - name: Run SMAP CPU security smoke
+        run: python tools/testkit/aios-testkit.py kernel --target test --strict --smoke-profile minimal --cpu-profile max-smap --export-boot-summary
+
+      - name: Run SMAP CPU security shell lane
+        run: python tools/testkit/aios-testkit.py shell --strict --skip-build --cpu-profile max-smap
+
+      - name: Run boot inventory (all profiles + structural drift)
+        run: python tools/testkit/aios-testkit.py boot-inventory --profiles full minimal storage-only --strict
+
+      - name: Upload boot artifacts
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: linux-boot-artifacts
+          path: |
+            kernel/build/aios-kernel.bin
+            kernel/build/aios-kernel.iso
+            kernel/build/serial_output.log
+            kernel/build/boot-summary/
+            kernel/build/shell-smoke/
+            kernel/build/shell-smoke/transcript.log
+            kernel/build/shell-smoke/summary.json
+            kernel/build/boot-matrix/summary.json
+            kernel/build/boot-inventory/summary.json
+            kernel/build/tool-smoke/summary.json
+            kernel/build/tool-smoke/static-chaos-score.json
+            kernel/build/tool-smoke/memory_journal.jsonl
+            kernel/build/tool-smoke/adapter_candidates.jsonl
+          if-no-files-found: warn

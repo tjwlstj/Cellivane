@@ -1,0 +1,43 @@
+# Build artifacts
+build/
+.toolchain/
+*.o
+*.bin
+*.iso
+*.img
+
+# Editor files
+*.swp
+*.swo
+*~
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Local-only external tooling scratch space
+__NO_COMMIT__*/
+
+# Python caches
+__pycache__/
+*.pyc
+
+# Cellivane local development and private evidence
+.venv/
+.cellivane/
+evidence/
+components/seed/evidence/
+components/seed/.venv/
+components/seed/.toolchain/
+*.gguf
+*.safetensors
+*.dll
+*.exe
+*.pdb
+.env
+.env.*
+!.env.example
+*.pem
+*.key
