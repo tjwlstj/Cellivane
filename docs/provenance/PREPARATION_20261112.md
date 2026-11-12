@@ -29,7 +29,9 @@ cross GCC/ld/objcopy 실행과 Python 개발 진입을 확인했다. cross toolc
 | Hosted 전체 | 미완료 FAIL, exit 3221225480 | Windows handle 종료 오류, terminal unittest summary 없음 |
 | Seed 전체 | 미완료 FAIL, exit 3221225480 | Windows handle 종료 오류, terminal unittest summary 없음 |
 | Seed HTTP proxy fixture 단독 | 1 FAIL | ANSWERED 대신 UNKNOWN. 이 세션 통신 제약의 영향과 구현 문제를 추가 분리해야 함 |
-| H1 fixtures 최초 실행 | HEAD 부재로 FAIL | 아직 commit이 없던 시점. commit 후 새 artifact로 재실행 필요 |
+| H1 fixtures 최초 실행 | HEAD 부재로 FAIL | 최초 준비 단계, 원본 보존 |
+| H1 fixtures commit 후 새 실행 | 12/12 기대 결과 일치 PASS | source 기준선의 관측·관리 trace 계약 |
+| Git 새 checkout 검증 | PASS | autocrlf=true에서도 imported591 hash/bytes 일치 |
 
 로컬 raw 로그·상세 도구 경로는 gitignored build/workspace에 보존한다. 전체 suite가 끝나지 않았으므로 과거 1122/815 결과를 이 새 snapshot의 PASS로 쓰지 않는다.
 
