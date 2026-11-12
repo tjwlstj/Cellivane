@@ -3064,8 +3064,8 @@
       "source_sha256": "b4278ceed1a0c2647ac69781aafd8e70b14c9ea03226bbef3d80f459dd2348dd",
       "reference_commit": "7d47524867e5f3d49521a0a5f7b1d0e65b5fe395",
       "snapshot_uncommitted_content_possible": true,
-      "exported_sha256": "d4a768b6094b3724af82bca012bec15af6ac4cf7bbdbd8a897a9f4b483011ee8",
-      "exported_bytes": 9640,
+      "exported_sha256": "8cdabd01420d4df2b1daefb513156c0d2293b1fe24078028c4c52b6e6524a609",
+      "exported_bytes": 9654,
       "public_text_adjusted": true
     },
     {
@@ -6964,9 +6964,9 @@
       "source_sha256": "0fb3083b65fbf035dd3ec63bcbf3b507b04de397cc02d00264e3cee4d0554384",
       "reference_commit": "b89273b0e2cbb4ec7a61e1efb02f69beb1d529f1",
       "snapshot_uncommitted_content_possible": true,
-      "exported_sha256": "0fb3083b65fbf035dd3ec63bcbf3b507b04de397cc02d00264e3cee4d0554384",
-      "exported_bytes": 33159,
-      "public_text_adjusted": false
+      "exported_sha256": "0771c547e30d8095f95f36e4f548254c6cec54a278260d2514431d6d4f5cd5c3",
+      "exported_bytes": 33209,
+      "public_text_adjusted": true
     },
     {
       "component": "seed",
@@ -7234,6 +7234,31 @@
           "path": "components/seed/tools/hosted/tests/test_cellivane_runtime_transport.py",
           "before_export_sha256": "8d0c36a818ee7e85910c4b02e50d6cc2972c292f9f40292f615c0b7ecaca3714",
           "after_export_sha256": "6fb497a11fb90a7c0b6ad45491c967270f4dad8950061a303251dd7f97ea607b"
+        }
+      ]
+    },
+    {
+      "id": "ci-cpu-baseline-and-zip-20261112",
+      "baseline_commit": "4ce12553ce1af68dde3cdde40c937b95dbd59624",
+      "reason": "Declare baseline x86-64 ISA for compiler portability and freeze synthetic ZIP member times; kernel C bodies and production evidence verifiers unchanged.",
+      "review": "docs/provenance/CI_BOOTSTRAP_20261112.md",
+      "validation": {
+        "remote_iso_first_fault": "UD_at_BMI2_shrx",
+        "zip_timestamp_boundary_before": "EXPECTED_ARCHIVE_PIN_FAILURE",
+        "zip_timestamp_boundary_after": "PASS",
+        "soak_verifier_tests_pass": 32,
+        "production_soak_verifier_unchanged": true
+      },
+      "files": [
+        {
+          "path": "kernel/Makefile",
+          "before_export_sha256": "d4a768b6094b3724af82bca012bec15af6ac4cf7bbdbd8a897a9f4b483011ee8",
+          "after_export_sha256": "8cdabd01420d4df2b1daefb513156c0d2293b1fe24078028c4c52b6e6524a609"
+        },
+        {
+          "path": "components/seed/tools/hosted/tests/test_cellivane_soak_verifier.py",
+          "before_export_sha256": "0fb3083b65fbf035dd3ec63bcbf3b507b04de397cc02d00264e3cee4d0554384",
+          "after_export_sha256": "0771c547e30d8095f95f36e4f548254c6cec54a278260d2514431d6d4f5cd5c3"
         }
       ]
     }

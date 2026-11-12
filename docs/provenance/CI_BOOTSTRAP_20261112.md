@@ -39,3 +39,11 @@ Seed 실패는 정상 synthetic receipt가 현재 Python 실행 파일의 별칭
 정확한 command/log bytes를 확인하는 이 성공 fixture에만 timeout=2를 명시했다. production transport, 80ms timeout·blocked-write fault tests, 250ms remaining-budget test는 변경하지 않았다. 원본 source hash를 보존하고 네 번째 검토 대상 source overlay로 기록한다.
 
 실제 fsync 후 120ms 지연을 주입해 수정 전 timeout과 수정 후 성공을 확인했고, transport module 전체도 성공했다. 새 수정 SHA의 전체 CI 결과는 별도 확인한다. 최초 실패 run은 그대로 보존한다.
+
+## 원격 CPU ISA와 합성 ZIP 시각의 재현성
+
+[d52dc6c Linux Boot Check run 43226550465](https://github.com/tjwlstj/Cellivane/actions/runs/43226550465)의 kernel compile/link/ISO는 성공했지만 기본 CPU의 QEMU 부팅은 실패했다. 내려받은 동일 ISO를 로컬 QEMU에서 재현하자 console_write_hex의 BMI2 shrx 명령(RIP 0x121ae4)에서 최초 #UD가 발생하고, 초기 IDT 부재로 double/triple fault가 이어졌다. 같은 호스트의 cross GCC 14 빌드는 BIOS 최소 부팅을 통과했다. Makefile에 -march=x86-64를 명시해 커널 기본 ISA를 고정한다. CPU profile을 확대하거나 verdict를 완화하지 않는다.
+
+[4ce1255 Workspace and Seed run 43227181603](https://github.com/tjwlstj/Cellivane/actions/runs/43227181603)은 workspace 양쪽·Seed Ubuntu(815개, 33 skip)가 성공했다. Seed Windows는 815개 중 14 skip·단일 backend-archive-pin ERROR로 실패했다. soak fixture 두 ZIP의 payload가 같아도 생성 시각이 DOS 2초 경계를 넘으면 archive hash가 달라졌다. 서로 다른 timestamp를 주입해 실패를 재현했다. 합성 ZIP member의 시각만 고정한 뒤 같은 재현과 soak verifier 32개가 성공했다. production archive pin·tamper 검증은 그대로 유지한다.
+
+모든 최초 실패와 원본 source hash를 보존한다. 새 수정 SHA의 전체 CI 수락은 해당 commit의 원격 terminal 결과로만 판정한다.

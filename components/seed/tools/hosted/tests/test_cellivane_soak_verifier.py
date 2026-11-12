@@ -84,7 +84,7 @@ class Fixture:
         members = {"ollama.exe": b"SYNTHETIC NOT AN EXECUTABLE", "lib/cuda/ggml-cuda.dll": b"SYNTHETIC NOT A DLL"}
         with zipfile.ZipFile(archive, "w") as package:
             for name, raw in members.items():
-                package.writestr(name, raw)
+                package.writestr(zipfile.ZipInfo(name, date_time=(2020, 1, 1, 0, 0, 0)), raw)
                 target = backend / name
                 target.parent.mkdir(parents=True, exist_ok=True)
                 target.write_bytes(raw)

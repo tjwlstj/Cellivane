@@ -48,3 +48,14 @@ Testkit의 Job active-process drain과 retained process-handle signaled 확인 �
 ## 줄바꿈·서식 보존
 
 기존 runtime/tests bytes를 보존하기 위해 기본 Git 변환은 비활성화하고 명시된 LF/CRLF 규칙을 유지했다. request_state.py는 source manifest의 CRLF bytes를 보존한다. 새 작성 파일의 diff --check는 통과했다. 초기 전체 import의 기존 공백/EOF 서식 진단은 build/workspace/staged-whitespace.txt에 보존했으며 source bytes를 일괄 정리하지 않았다.
+
+## 재시작 후 접근 복구와 현재 준비 범위
+
+앞선 실패 표는 최초 제한 세션의 원본 기록이다. 재시작 후 GitHub 인증·repo 쓰기·HTTPS fetch/push가 복구되어 준비한 beta를 직접 게시했다. 원본 작업트리는 변경하지 않았다.
+
+- 기본·native doctor READY. C: cross compiler, Make, NASM, QEMU 외에 GRUB BIOS modules와 xorriso의 최소 MSYS 의존성 301파일·9,097,269 bytes를 준비하고 원본·사본 hash 일치를 확인했다. 도구와 로컬 설정은 ignored다.
+- root hosted 전체 재실행은 1297개 중 1212 PASS·85 skip, exit 0·timeout false다. Linux 전용 71개와 Windows symlink 권한 14개를 건너뛰었다. 앞선 invalid-handle 종료는 이번에 재현되지 않았다.
+- C:에서 cross GCC compile/link와 BIOS minimal/default CPU QEMU smoke를 확인했다. boot smoke는 제한 시간 뒤 호스트가 VM을 종료하는 계약이므로 clean guest exit를 뜻하지 않는다.
+- 원격 CI에서 새로 드러난 CPU ISA·합성 시험 자료 문제와 각 반례는 [CI 기록](CI_BOOTSTRAP_20261112.md)에 보존한다. 최초 실패를 삭제하거나 실제 모델·UEFI·물리 설치 수락으로 승격하지 않는다.
+
+로컬 상세 receipt·raw log는 build/workspace에 남고 공개 소스에 포함하지 않는다. 제품의 다음 통합 수락은 ROADMAP의 고정 UEFI 설치와 유용한 보고 Task다.

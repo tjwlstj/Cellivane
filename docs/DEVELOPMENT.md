@@ -28,9 +28,9 @@ hosted, testkit, Seed는 각각 별도 Python subprocess에서 실행한다. 두
 
 ## 선택 native 도구
 
-native cross build에는 x86_64-elf GCC/binutils, Make·NASM이 필요하다. 커널 Makefile은 GNU C11 모드를 명시해 새 컴파일러의 기본 C23과 기존 타입 계약이 충돌하지 않게 한다. Windows 스크립트는 AIOS_X86_64_ELF_ROOT 또는 .toolchain/x86_64-elf를 지원한다. 일반 MinGW GCC를 cross compiler로 취급하지 않는다.
+native cross build에는 x86_64-elf GCC/binutils, Make·NASM이 필요하다. 커널 Makefile은 GNU C11과 -march=x86-64를 명시해 새 컴파일러의 기본 언어·CPU ISA가 기존 타입·기본 QEMU CPU 계약과 충돌하지 않게 한다. Windows 스크립트는 AIOS_X86_64_ELF_ROOT 또는 .toolchain/x86_64-elf를 지원한다. 일반 MinGW GCC를 cross compiler로 취급하지 않는다.
 
-ISO 생성과 VM에는 GRUB·xorriso·QEMU 등이 별도로 필요하다. 찾은 QEMU/UEFI 펌웨어는 개발 도구이며 새 UEFI 설치 검증의 증거가 아니다. 이번 세션의 MSYS xorriso/GRUB·WSL 제한은 준비 기록을 따른다.
+ISO 생성과 VM에는 GRUB·xorriso·QEMU 등이 별도로 필요하다. 찾은 QEMU/UEFI 펌웨어는 개발 도구이며 새 UEFI 설치 검증의 증거가 아니다. 재시작 뒤 C:의 GRUB BIOS 모듈과 xorriso/MSYS 최소 의존성을 준비했고 native doctor READY·BIOS QEMU 최소 smoke를 확인했다. .cellivane/local-tools.json이 도구 위치를 기록한다. WSL·UEFI 설치·물리 장치 수락은 별도다. 최초 실패와 재개 검증은 준비·CI 기록을 따른다.
 
 모델·엔진은 각 manifest·hash·라이선스를 확인해 별도로 준비한다. 기본 개발 준비는 모델 실행·다운로드를 하지 않는다.
 
