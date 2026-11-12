@@ -149,7 +149,9 @@ class TransportFaultTests(unittest.TestCase):
 
     def test_partial_pipe_writes_preserve_exact_raw_command(self):
         with tempfile.TemporaryDirectory() as directory:
-            transport = self.make_transport(Path(directory))
+            # Framing success must allow durable-log I/O and host scheduling.
+            # Deadline and blocked-write tests retain their short budgets.
+            transport = self.make_transport(Path(directory), timeout=2)
             captured = bytearray()
 
             def partial(raw):

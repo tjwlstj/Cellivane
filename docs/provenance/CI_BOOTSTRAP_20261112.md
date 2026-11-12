@@ -29,3 +29,13 @@ Seed 실패는 정상 synthetic receipt가 현재 Python 실행 파일의 별칭
 - Seed matrix 12개·verifier 55개, 합계 67 PASS·0 skip을 확인했다. 이 수정 SHA의 원격 CI는 별도 확인하며 최초 실패는 위 run에 보존한다.
 
 프로젝트 성숙도는 PARTIAL이다. CI 호환 수정이 새 실제 모델·GPU·운영 이미지·UEFI·물리 설치나 심핵·고권한 실행을 검증한 것은 아니다.
+
+## d52dc6c의 Seed 단일 timeout과 시험 여유
+
+[Workspace and Seed run 43226550286](https://github.com/tjwlstj/Cellivane/actions/runs/43226550286)은 workspace 두 플랫폼과 Seed Windows(815개, 14 skip)가 성공했다. Seed Ubuntu는 815개 중 33 skip과 단일 ERROR로 실패했다. 기존 interpreter symlink 오류는 재발하지 않았다.
+
+실패한 test_partial_pipe_writes_preserve_exact_raw_command는 fake process와 이미 queue에 넣은 응답을 쓰지만, 기본 80ms deadline 안에서 durable stdin fsync와 writer scheduling까지 처리한다. 실패는 응답 대기 전 remaining <= 0 분기다. fsync와 scheduling 각각의 지연은 이 CI 로그로 특정할 수 없다.
+
+정확한 command/log bytes를 확인하는 이 성공 fixture에만 timeout=2를 명시했다. production transport, 80ms timeout·blocked-write fault tests, 250ms remaining-budget test는 변경하지 않았다. 원본 source hash를 보존하고 네 번째 검토 대상 source overlay로 기록한다.
+
+실제 fsync 후 120ms 지연을 주입해 수정 전 timeout과 수정 후 성공을 확인했고, transport module 전체도 성공했다. 새 수정 SHA의 전체 CI 결과는 별도 확인한다. 최초 실패 run은 그대로 보존한다.

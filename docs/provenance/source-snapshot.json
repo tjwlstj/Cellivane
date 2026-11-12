@@ -6808,9 +6808,9 @@
       "source_sha256": "8d0c36a818ee7e85910c4b02e50d6cc2972c292f9f40292f615c0b7ecaca3714",
       "reference_commit": "b89273b0e2cbb4ec7a61e1efb02f69beb1d529f1",
       "snapshot_uncommitted_content_possible": true,
-      "exported_sha256": "8d0c36a818ee7e85910c4b02e50d6cc2972c292f9f40292f615c0b7ecaca3714",
-      "exported_bytes": 13955,
-      "public_text_adjusted": false
+      "exported_sha256": "6fb497a11fb90a7c0b6ad45491c967270f4dad8950061a303251dd7f97ea607b",
+      "exported_bytes": 14119,
+      "public_text_adjusted": true
     },
     {
       "component": "seed",
@@ -7215,6 +7215,25 @@
           "path": "components/seed/tools/hosted/tests/test_cellivane_efficiency_verifier.py",
           "before_export_sha256": "3de40013d7d17ad2b9727cfbf2426c46a536a2f2a584857c6c4810eba24c6000",
           "after_export_sha256": "da5861e339fbe36b211e16beffcde237b5d2287106e829832eccb82ff90800ee"
+        }
+      ]
+    },
+    {
+      "id": "ci-pipe-success-budget-20261112",
+      "baseline_commit": "d52dc6cbd6e5fe3ae755694e18fbaeb26b936b82",
+      "reason": "Give the exact-byte partial-write success fixture a two-second budget for durable I/O and host scheduling; production deadlines and short-budget fault tests unchanged.",
+      "review": "docs/provenance/CI_BOOTSTRAP_20261112.md",
+      "validation": {
+        "delayed_fsync_before": "EXPECTED_TIMEOUT",
+        "delayed_fsync_after": "PASS",
+        "transport_module": "PASS",
+        "production_transport_unchanged": true
+      },
+      "files": [
+        {
+          "path": "components/seed/tools/hosted/tests/test_cellivane_runtime_transport.py",
+          "before_export_sha256": "8d0c36a818ee7e85910c4b02e50d6cc2972c292f9f40292f615c0b7ecaca3714",
+          "after_export_sha256": "6fb497a11fb90a7c0b6ad45491c967270f4dad8950061a303251dd7f97ea607b"
         }
       ]
     }
