@@ -146,18 +146,26 @@ class SeedCoreTests(unittest.TestCase):
             waiter.join(2)
 
     def test_waiter_timeout_releases_only_waiter_and_does_not_cancel_owner(self):
-        gate = threading.Event()
-        engine = self.engine(lambda _p: gate.wait(2) and answer(), timeout_s=.03)
+        gate, entered = threading.Event(), threading.Event()
+        def backend(_payload):
+            entered.set()
+            gate.wait(2)
+            return answer()
+        engine = self.engine(backend, timeout_s=.03)
         owner, result = self.launch(engine, request())
-        self.assertTrue(until(lambda: engine.status()["active"] == 1))
-        with self.assertRaisesRegex(BackendFailure, "waiter-timeout"):
-            engine.complete(request())
-        self.assertEqual(engine.status()["waiters"], 0)
-        self.assertEqual(engine.status()["active"], 1)
-        self.assertTrue(owner.is_alive())
-        gate.set()
-        owner.join(2)
+        try:
+            self.assertTrue(entered.wait(1))
+            with self.assertRaisesRegex(BackendFailure, "waiter-timeout"):
+                engine.complete(request())
+            self.assertEqual(engine.status()["waiters"], 0)
+            self.assertEqual(engine.status()["active"], 1)
+            self.assertTrue(owner.is_alive())
+        finally:
+            gate.set()
+            owner.join(2)
+        self.assertFalse(owner.is_alive())
         self.assertIsInstance(result[0], BackendFailure)  # Owner itself returned past its deadline.
+        self.assertEqual(str(result[0]), "backend-deadline")
         self.assertEqual(engine.status()["cache_entries"], 0)
         self.assertEqual(engine.status()["backend_calls"], 1)
 

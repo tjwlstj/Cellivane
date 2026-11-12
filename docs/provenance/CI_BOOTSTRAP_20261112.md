@@ -47,3 +47,11 @@ Seed 실패는 정상 synthetic receipt가 현재 Python 실행 파일의 별칭
 [4ce1255 Workspace and Seed run 43227181603](https://github.com/tjwlstj/Cellivane/actions/runs/43227181603)은 workspace 양쪽·Seed Ubuntu(815개, 33 skip)가 성공했다. Seed Windows는 815개 중 14 skip·단일 backend-archive-pin ERROR로 실패했다. soak fixture 두 ZIP의 payload가 같아도 생성 시각이 DOS 2초 경계를 넘으면 archive hash가 달라졌다. 서로 다른 timestamp를 주입해 실패를 재현했다. 합성 ZIP member의 시각만 고정한 뒤 같은 재현과 soak verifier 32개가 성공했다. production archive pin·tamper 검증은 그대로 유지한다.
 
 모든 최초 실패와 원본 source hash를 보존한다. 새 수정 SHA의 전체 CI 수락은 해당 commit의 원격 terminal 결과로만 판정한다.
+
+## 로컬 Seed 전체 회귀와 owner/waiter 시험 동기화
+
+0eb0a12의 원격 Workspace/Seed 네 job은 성공했다. 별도 로컬 Seed 전체 실행은 terminal까지 진행해 815개 중 800 PASS·1 failure·14 skip을 기록했다. 실패는 test_waiter_timeout_releases_only_waiter_and_does_not_cancel_owner다. 처음의 invalid-handle 중단과 다른 실제 시험 실패이며 원본 로그를 보존한다.
+
+fixture는 active 상태가 공개되면 owner의 제한시간 측정과 backend가 이미 시작했다고 가정했다. 실제 core는 active를 공개한 뒤 lock을 나오고 monotonic 시작 시각을 잡는다. 그 사이 owner를 200ms 지연시키면 waiter가 먼저 만료된 뒤 owner가 자신의 제한시간 안에 정상 반환할 수 있어 기존 assertion이 실패한다. 이 스케줄을 core.time에만 proxy를 넣어 결정적으로 재현했다. 최초 전체 실행에는 이 시각별 관측이 없으므로 같은 원인이 실제 발생했다고 단정하지 않는다.
+
+fixture만 backend entered Event를 기다린 뒤 waiter 제한시간을 검사하도록 고쳤다. finally의 gate release·join, owner 종료·backend-deadline, 빈 cache와 backend 호출 1회 확인을 유지한다. 같은 선행 지연에서 수정 후 1 PASS와 core module 20 PASS를 확인했다. production core와 제한시간·취소·캐시 계약은 변경하지 않았다. 새 수정 SHA의 전체 원격 회귀는 별도 확인한다.

@@ -6856,9 +6856,9 @@
       "source_sha256": "c2f97128ddeb9a641b6c8d3c92a6e46ca5ed2472acc58149fb2a4251a721f473",
       "reference_commit": "b89273b0e2cbb4ec7a61e1efb02f69beb1d529f1",
       "snapshot_uncommitted_content_possible": true,
-      "exported_sha256": "c2f97128ddeb9a641b6c8d3c92a6e46ca5ed2472acc58149fb2a4251a721f473",
-      "exported_bytes": 18379,
-      "public_text_adjusted": false
+      "exported_sha256": "cbd00c757cd8f51628b4e18f25607ef97f377c0dfdb7e6fc18bd225cdeebb962",
+      "exported_bytes": 18624,
+      "public_text_adjusted": true
     },
     {
       "component": "seed",
@@ -7259,6 +7259,25 @@
           "path": "components/seed/tools/hosted/tests/test_cellivane_soak_verifier.py",
           "before_export_sha256": "0fb3083b65fbf035dd3ec63bcbf3b507b04de397cc02d00264e3cee4d0554384",
           "after_export_sha256": "0771c547e30d8095f95f36e4f548254c6cec54a278260d2514431d6d4f5cd5c3"
+        }
+      ]
+    },
+    {
+      "id": "local-waiter-fixture-order-20261112",
+      "baseline_commit": "0eb0a124ff041fcecac79a2274f675d825123b79",
+      "reason": "Synchronize the timeout fixture with actual backend entry and guarantee owner cleanup; production deadlines and cancellation/cache contracts unchanged.",
+      "review": "docs/provenance/CI_BOOTSTRAP_20261112.md",
+      "validation": {
+        "delayed_owner_clock_before": "EXPECTED_ASSERTION_FAILURE",
+        "delayed_owner_clock_after": "PASS",
+        "seed_core_tests_pass": 20,
+        "production_core_unchanged": true
+      },
+      "files": [
+        {
+          "path": "components/seed/tools/hosted/tests/test_cellivane_seed_core.py",
+          "before_export_sha256": "c2f97128ddeb9a641b6c8d3c92a6e46ca5ed2472acc58149fb2a4251a721f473",
+          "after_export_sha256": "cbd00c757cd8f51628b4e18f25607ef97f377c0dfdb7e6fc18bd225cdeebb962"
         }
       ]
     }

@@ -37,3 +37,16 @@ ISO 생성과 VM에는 GRUB·xorriso·QEMU 등이 별도로 필요하다. 찾은
 ## 게시
 
 beta를 작업·공개 기준 브랜치로 사용한다. 공개 전 source-snapshot 검사, public_audit, 관련 회귀, git diff --check를 통과시킨다. 게시 후 exact commit의 CI를 확인한다. 기존 저장소의 main/beta는 변경하지 않는다.
+
+
+## 이 C: 작업 공간의 native 실행기
+
+준비한 로컬 .cellivane/native.ps1은 local-tools.json을 읽어 자식 PowerShell에 도구 경로를 연결하고 기존 native builder를 실행한다. 호출 셸과 사용자·시스템 PATH를 보존한다. 이 로컬 실행기와 도구는 gitignored다.
+
+~~~powershell
+.\.cellivane\native.ps1 -Target info
+.\.cellivane\native.ps1 -Target iso
+.\.cellivane\native.ps1 -Target test -SmokeProfile minimal -CpuProfile default
+~~~
+
+현재 준비된 GRUB 모듈은 BIOS 범위다. UEFI 설치 수락은 ROADMAP의 별도 단계로 진행한다.
